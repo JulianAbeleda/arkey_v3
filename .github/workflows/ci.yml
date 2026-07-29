@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          allowed='^(.github|dependencies|extras|scripts)(/|$)|^(.gitignore|LICENSE|NOTICE|README.md|SECURITY.md)$'
+          allowed='^(.github|dependencies|extras|scripts)(/|$)|^docs/bubble-tea-migration-scope.md$|^(.gitignore|LICENSE|NOTICE|README.md|SECURITY.md)$'
           unexpected="$(git ls-files | grep -Ev "$allowed" || true)"
           if [[ -n "$unexpected" ]]; then
             echo 'Unexpected files outside the Arkey v3 boot-manager boundary:' >&2

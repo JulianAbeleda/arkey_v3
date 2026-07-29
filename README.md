@@ -53,6 +53,10 @@ this repository.
 See [`extras/codex-boot/README.md`](extras/codex-boot/README.md) for behavior,
 commands, and local runtime details.
 
+The planned migration from the Bash application to a Go UI built with Bubble
+Tea, Bubbles, and Lip Gloss is defined in
+[`docs/bubble-tea-migration-scope.md`](docs/bubble-tea-migration-scope.md).
+
 ## Validate
 
 ```bash
