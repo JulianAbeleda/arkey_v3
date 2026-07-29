@@ -12,11 +12,11 @@ type Item struct {
 	Disabled                  bool
 }
 type Screen struct {
-	Title, Subtitle, Notice, Error string
-	Items                          []Item
-	Cursor, Width, Height          int
-	BusyLabel                      string
-	Dark                           bool
+	Title, Subtitle, Notice, Error, Help string
+	Items                                []Item
+	Cursor, Width, Height                int
+	BusyLabel                            string
+	Dark                                 bool
 }
 
 func clip(s string, width int) string {
@@ -124,7 +124,11 @@ func Render(s Screen) string {
 	if s.Error != "" {
 		lines = append(lines, "", t.Bad.Render(clip(s.Error, inner)))
 	}
-	lines = append(lines, "", t.Muted.Render(clip("↑/↓ or j/k move · Enter/→ select · ←/Esc/b back · q quit", inner)))
+	help := s.Help
+	if help == "" {
+		help = "↑/↓ or j/k move · Enter/→ select · ←/Esc/b back · q quit"
+	}
+	lines = append(lines, "", t.Muted.Render(clip(help, inner)))
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.Accent.GetForeground()).

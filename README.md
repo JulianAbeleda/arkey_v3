@@ -29,6 +29,7 @@ Config
     tinygrad     (in development; unavailable)
     llama.cpp
       installed GGUF models
+      Enter loads · d unloads the active model
   Frontier
     DeepSeek
     Codex

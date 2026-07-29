@@ -49,6 +49,58 @@ func (LinuxInspector) Process(_ context.Context, pid int) (Process, error) {
 	return Process{PID: pid, Executable: exe, ArgsFingerprint: hex.EncodeToString(sum[:]), StartTime: started}, nil
 }
 
+// LlamaProcess recognizes only Arkey's loopback llama command shape and
+// returns the model from the live argv. It is used to survive systemd PID
+// changes without weakening process-ownership checks.
+func (i LinuxInspector) LlamaProcess(ctx context.Context, pid int, server string, port int) (Process, string, error) {
+	process, err := i.Process(ctx, pid)
+	if err != nil {
+		return Process{}, "", err
+	}
+	canonicalServer, err := filepath.EvalSymlinks(server)
+	if err != nil || process.Executable != canonicalServer {
+		return Process{}, "", errors.New("runtime: llama executable mismatch")
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return Process{}, "", err
+	}
+	args := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+	wants := map[string]string{"--alias": "arkey-local", "--host": "127.0.0.1", "--port": strconv.Itoa(port)}
+	model := ""
+	seen := map[string]bool{}
+	for index := 1; index+1 < len(args); index++ {
+		key, value := args[index], args[index+1]
+		if key == "--model" {
+			if seen[key] {
+				return Process{}, "", errors.New("runtime: duplicate llama model argument")
+			}
+			seen[key], model = true, value
+			index++
+			continue
+		}
+		if expected, ok := wants[key]; ok {
+			if seen[key] || value != expected {
+				return Process{}, "", errors.New("runtime: llama arguments do not match Arkey")
+			}
+			seen[key] = true
+			index++
+		}
+	}
+	if model == "" || len(seen) != len(wants)+1 || !strings.EqualFold(filepath.Ext(model), ".gguf") {
+		return Process{}, "", errors.New("runtime: incomplete Arkey llama arguments")
+	}
+	canonicalModel, err := filepath.EvalSymlinks(model)
+	if err != nil {
+		return Process{}, "", err
+	}
+	info, err := os.Stat(canonicalModel)
+	if err != nil || !info.Mode().IsRegular() {
+		return Process{}, "", errors.New("runtime: llama model is not a regular file")
+	}
+	return process, canonicalModel, nil
+}
+
 // PortOwner finds an IPv4/IPv6 listening socket and maps its inode back to a
 // process FD. It avoids invoking a shell or relying on optional utilities.
 func (LinuxInspector) PortOwner(_ context.Context, port int) (int, error) {
@@ -267,11 +319,8 @@ func (s SystemdService) Start(ctx context.Context, unit string, args []string, l
 		return 0, e
 	}
 	for i := 0; i < 80; i++ {
-		out, e := s.Runner.Run(ctx, "systemctl", "--user", "show", unit+".service", "--property=MainPID", "--value")
-		if e == nil {
-			if p, _ := strconv.Atoi(strings.TrimSpace(string(out))); p > 0 {
-				return p, nil
-			}
+		if pid, e := s.MainPID(ctx, unit); e == nil && pid > 0 {
+			return pid, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -280,6 +329,17 @@ func (s SystemdService) Start(ctx context.Context, unit string, args []string, l
 		}
 	}
 	return 0, errors.New("runtime: systemd unit did not produce a pid")
+}
+func (s SystemdService) MainPID(ctx context.Context, unit string) (int, error) {
+	out, err := s.Runner.Run(ctx, "systemctl", "--user", "show", unit+".service", "--property=MainPID", "--value")
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
 }
 func (s SystemdService) Stop(ctx context.Context, unit string) error {
 	_, e := s.Runner.Run(ctx, "systemctl", "--user", "stop", unit+".service")

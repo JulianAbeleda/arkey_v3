@@ -26,6 +26,11 @@ type localActivatedMsg struct {
 	status     Status
 	err        error
 }
+type localUnloadedMsg struct {
+	generation uint64
+	status     Status
+	err        error
+}
 type gpuScannedMsg struct {
 	generation uint64
 	status     Status

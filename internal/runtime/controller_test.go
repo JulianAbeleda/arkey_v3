@@ -23,8 +23,9 @@ func (m *memStore) Save(_ context.Context, s State) error {
 func (m *memStore) Clear(context.Context) error { m.s = State{}; m.err = ErrNoState; return nil }
 
 type fakeInspect struct {
-	p    map[int]Process
-	port int
+	p      map[int]Process
+	models map[int]string
+	port   int
 }
 
 func (f *fakeInspect) Process(_ context.Context, p int) (Process, error) {
@@ -35,6 +36,17 @@ func (f *fakeInspect) Process(_ context.Context, p int) (Process, error) {
 	return v, nil
 }
 func (f *fakeInspect) PortOwner(context.Context, int) (int, error) { return f.port, nil }
+func (f *fakeInspect) LlamaProcess(ctx context.Context, pid int, _ string, _ int) (Process, string, error) {
+	process, err := f.Process(ctx, pid)
+	if err != nil {
+		return Process{}, "", err
+	}
+	model, ok := f.models[pid]
+	if !ok {
+		return Process{}, "", errors.New("not an Arkey llama process")
+	}
+	return process, model, nil
+}
 
 type fakeLaunch struct {
 	pid     int
@@ -76,6 +88,20 @@ func (f fakeBackend) Accelerated(context.Context, string, string) (bool, error) 
 type fakeLock struct{}
 
 func (fakeLock) Lock(context.Context) (func() error, error) { return func() error { return nil }, nil }
+
+type fakeSystemd struct {
+	pid     int
+	stopped bool
+}
+
+func (*fakeSystemd) Available(context.Context) bool { return true }
+func (s *fakeSystemd) Start(context.Context, string, []string, string) (int, error) {
+	return s.pid, nil
+}
+func (s *fakeSystemd) Stop(context.Context, string) error { s.stopped = true; return nil }
+func (s *fakeSystemd) MainPID(context.Context, string) (int, error) {
+	return s.pid, nil
+}
 
 type instant struct{}
 
@@ -140,6 +166,36 @@ func TestInspectorFailureCleansUpNewDirectProcess(t *testing.T) {
 	}
 	if len(launch.stopped) != 1 || launch.stopped[0] != 7 {
 		t.Fatalf("new process was not cleaned up: %#v", launch.stopped)
+	}
+}
+
+func TestStopRecoversRestartedSystemdPID(t *testing.T) {
+	store := &memStore{s: State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "old", StartTime: 9, Model: "/models/old.gguf", Server: "/bin/llama", Port: 8080, Manager: "systemd"}}
+	inspector := &fakeInspect{
+		p:      map[int]Process{8: {PID: 8, Executable: "/bin/llama", ArgsFingerprint: "new", StartTime: 10}},
+		models: map[int]string{8: "/models/active.gguf"},
+	}
+	service := &fakeSystemd{pid: 8}
+	controller := &Controller{Store: store, Inspector: inspector, Service: service, Lock: fakeLock{}}
+	if err := controller.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !service.stopped || !errors.Is(store.err, ErrNoState) {
+		t.Fatalf("restarted systemd unit was not stopped and cleared: stopped=%v err=%v", service.stopped, store.err)
+	}
+}
+
+func TestLoadedReportsActualModelAfterSystemdRestart(t *testing.T) {
+	store := &memStore{s: State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "old", StartTime: 9, Model: "/models/selected.gguf", Server: "/bin/llama", Port: 8080, Manager: "systemd"}}
+	inspector := &fakeInspect{
+		p:      map[int]Process{8: {PID: 8, Executable: "/bin/llama", ArgsFingerprint: "new", StartTime: 10}},
+		models: map[int]string{8: "/models/actual.gguf"},
+	}
+	service := &fakeSystemd{pid: 8}
+	controller := &Controller{Store: store, Inspector: inspector, Service: service, Health: &fakeHealth{answers: []bool{true}}}
+	model, loaded, err := controller.Loaded(context.Background(), Config{Server: "/bin/llama", Port: 8080})
+	if err != nil || !loaded || model != "/models/actual.gguf" {
+		t.Fatalf("model=%q loaded=%v err=%v", model, loaded, err)
 	}
 }
 func TestStopRejectsPidReuse(t *testing.T) {

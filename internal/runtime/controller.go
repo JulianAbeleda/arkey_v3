@@ -85,6 +85,12 @@ type Service interface {
 	Start(context.Context, string, []string, string) (int, error)
 	Stop(context.Context, string) error
 }
+type PIDService interface {
+	MainPID(context.Context, string) (int, error)
+}
+type LlamaInspector interface {
+	LlamaProcess(context.Context, int, string, int) (Process, string, error)
+}
 type Health interface {
 	LlamaHealthy(context.Context, int) (bool, error)
 }
@@ -209,6 +215,36 @@ func (c *Controller) Status(ctx context.Context, cfg Config) (bool, error) {
 	}
 	return c.matchesHealthy(ctx, s, cfg), nil
 }
+
+// Loaded returns the healthy model actually held by the local runtime. For a
+// systemd restart it revalidates the current MainPID and argv instead of
+// trusting a stale persisted PID.
+func (c *Controller) Loaded(ctx context.Context, cfg Config) (string, bool, error) {
+	c.defaults()
+	s, err := c.Store.Load(ctx)
+	if err != nil && !errors.Is(err, ErrNoState) {
+		return "", false, err
+	}
+	if err == nil && c.owns(ctx, s) {
+		ok, healthErr := c.Health.LlamaHealthy(ctx, s.Port)
+		return s.Model, healthErr == nil && ok, nil
+	}
+	base := s
+	if base.Server == "" {
+		base.Server = cfg.Server
+	}
+	if base.Port == 0 {
+		base.Port = cfg.Port
+	}
+	base.Manager = "systemd"
+	current, recognized := c.currentSystemdState(ctx, base)
+	if !recognized {
+		return "", false, nil
+	}
+	ok, healthErr := c.Health.LlamaHealthy(ctx, current.Port)
+	return current.Model, healthErr == nil && ok, nil
+}
+
 func (c *Controller) Stop(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -243,6 +279,33 @@ func (c *Controller) owns(ctx context.Context, s State) bool {
 	}
 	p, e := c.Inspector.Process(ctx, s.PID)
 	return e == nil && p.Executable == s.Executable && p.ArgsFingerprint == s.ArgsFingerprint && p.StartTime == s.StartTime
+}
+
+func (c *Controller) currentSystemdState(ctx context.Context, base State) (State, bool) {
+	pidService, pidOK := c.Service.(PIDService)
+	llamaInspector, inspectOK := c.Inspector.(LlamaInspector)
+	if base.Manager != "systemd" || !pidOK || !inspectOK || base.Server == "" || base.Port < 1 {
+		return State{}, false
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		pid, err := pidService.MainPID(ctx, c.Unit)
+		if err != nil || pid < 1 {
+			return State{}, false
+		}
+		process, model, err := llamaInspector.LlamaProcess(ctx, pid, base.Server, base.Port)
+		if err == nil {
+			base.PID = pid
+			base.Executable = process.Executable
+			base.ArgsFingerprint = process.ArgsFingerprint
+			base.StartTime = process.StartTime
+			base.Model = model
+			return base, true
+		}
+		if ctx.Err() != nil {
+			return State{}, false
+		}
+	}
+	return State{}, false
 }
 func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 	if err := platform.EnsurePrivateDir(filepath.Dir(cfg.LogPath)); err != nil {
@@ -294,7 +357,11 @@ func llamaArgs(c Config) []string {
 }
 func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	if !c.owns(ctx, s) {
-		return fmt.Errorf("runtime: refusing to stop unrecognized process %d", s.PID)
+		current, recognized := c.currentSystemdState(ctx, s)
+		if !recognized {
+			return fmt.Errorf("runtime: refusing to stop unrecognized process %d", s.PID)
+		}
+		s = current
 	}
 	if s.Manager == "systemd" && c.Service != nil && c.Service.Available(ctx) {
 		return c.Service.Stop(ctx, c.Unit)

@@ -132,15 +132,31 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 		Route: app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model},
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
-	if cfg.Mode == "local" && cfg.Local.Model != "" {
-		ready, err := s.Runtime.Status(ctx, runtimeConfig(cfg, s.Paths))
-		if err == nil && ready {
-			status.Runtime = "local loaded"
-		} else if err == nil {
+	if cfg.Local.Model != "" {
+		loadedModel, ready, err := s.Runtime.Loaded(ctx, runtimeConfig(cfg, s.Paths))
+		if err == nil && loadedModel != "" {
+			status.LocalActive = true
+			status.LoadedModel = loadedModel
+			if ready {
+				status.LocalLoaded = true
+				status.Runtime = "local loaded"
+			} else {
+				status.Runtime = "local starting"
+			}
+		} else if err == nil && cfg.Mode == "local" {
 			status.Runtime = "local stopped"
 		}
 	}
 	return status, nil
+}
+
+// UnloadLocal releases the active model from memory without forgetting the
+// selection. The next Arkey Codex launch can load the same model again.
+func (s *Services) UnloadLocal(ctx context.Context) (app.Status, error) {
+	if err := s.Runtime.Stop(ctx); err != nil {
+		return app.Status{}, fmt.Errorf("unload local model: %w", err)
+	}
+	return s.Refresh(ctx)
 }
 
 func (s *Services) DiscoverModels(ctx context.Context) ([]app.ModelSummary, error) {

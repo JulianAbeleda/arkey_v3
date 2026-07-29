@@ -12,6 +12,9 @@ type Route struct {
 type Status struct {
 	Workspace, Runtime, MoonBridge, GPU string
 	Route                               Route
+	LoadedModel                         string
+	LocalActive                         bool
+	LocalLoaded                         bool
 	ReducedMotion                       bool
 }
 
@@ -30,6 +33,7 @@ type Services interface {
 	DiscoverModels(context.Context) ([]ModelSummary, error)
 	SelectFrontier(context.Context, string) (Status, error)
 	ActivateLocal(context.Context, string, ModelSummary) (Status, error)
+	UnloadLocal(context.Context) (Status, error)
 	ScanGPU(context.Context) (Status, error)
 }
 
@@ -42,4 +46,5 @@ func (NopServices) SelectFrontier(context.Context, string) (Status, error) { ret
 func (NopServices) ActivateLocal(context.Context, string, ModelSummary) (Status, error) {
 	return Status{}, nil
 }
-func (NopServices) ScanGPU(context.Context) (Status, error) { return Status{}, nil }
+func (NopServices) UnloadLocal(context.Context) (Status, error) { return Status{}, nil }
+func (NopServices) ScanGPU(context.Context) (Status, error)     { return Status{}, nil }

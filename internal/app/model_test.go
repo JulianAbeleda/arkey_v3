@@ -106,6 +106,61 @@ func TestViewIsPureAndStaleEffectsAreIgnored(t *testing.T) {
 	}
 }
 
+func TestLoadedModelIndicatorAndUnloadBinding(t *testing.T) {
+	m := New(nil)
+	m.screen = modelsScreen
+	m.models = []ModelSummary{{Path: "/models/active.gguf", Name: "active"}, {Path: "/models/other.gguf", Name: "other"}}
+	m.status = Status{LocalActive: true, LocalLoaded: true, LoadedModel: "/models/active.gguf", Route: Route{LocalModel: "/models/active.gguf", LocalRuntime: "llama"}}
+
+	items := m.items()
+	if items[0].State != "● loaded" || items[1].State != "installed" {
+		t.Fatalf("unexpected model indicators: %#v", items)
+	}
+	if !strings.Contains(m.help(), "d unload") {
+		t.Fatalf("model help does not advertise unload: %q", m.help())
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
+	if cmd == nil || !updated.(Model).busy {
+		t.Fatal("d did not begin the unload operation")
+	}
+	finished, _ := updated.(Model).Update(localUnloadedMsg{generation: updated.(Model).generation, status: Status{Route: Route{LocalModel: "/models/active.gguf", LocalRuntime: "llama"}}})
+	result := finished.(Model)
+	if result.busy || result.status.LocalLoaded || !strings.Contains(result.notice, "selection is unchanged") {
+		t.Fatalf("unexpected unload result: busy=%v loaded=%v notice=%q", result.busy, result.status.LocalLoaded, result.notice)
+	}
+	if got := result.items()[0].State; got != "selected" {
+		t.Fatalf("unloaded model state = %q, want selected", got)
+	}
+}
+
+func TestUnloadRequiresCursorOnLoadedModel(t *testing.T) {
+	m := New(nil)
+	m.screen = modelsScreen
+	m.cursors[modelsScreen] = 1
+	m.models = []ModelSummary{{Path: "/models/active.gguf"}, {Path: "/models/other.gguf"}}
+	m.status = Status{LocalActive: true, LocalLoaded: true, LoadedModel: "/models/active.gguf", Route: Route{LocalModel: "/models/active.gguf"}}
+	updated, cmd := m.Update(tea.KeyPressMsg{Text: "d", Code: 'd'})
+	if cmd != nil || updated.(Model).busy || !strings.Contains(updated.(Model).notice, "loaded model") {
+		t.Fatalf("wrong model was allowed to unload: %#v", updated)
+	}
+}
+
+func TestStartingModelIsShownWithoutClaimingItIsLoaded(t *testing.T) {
+	m := New(nil)
+	m.screen = modelsScreen
+	m.models = []ModelSummary{{Path: "/models/selected.gguf"}, {Path: "/models/starting.gguf"}}
+	m.status = Status{
+		LocalActive: true,
+		LoadedModel: "/models/starting.gguf",
+		Route:       Route{LocalModel: "/models/selected.gguf"},
+	}
+	items := m.items()
+	if items[0].State != "selected" || items[1].State != "◐ starting" {
+		t.Fatalf("unexpected transitional indicators: %#v", items)
+	}
+}
+
 // This is intentionally conservative: rendered ANSI escapes are absent in the
 // plain fallback test environment, and the production renderer measures them.
 func visibleWidth(s string) int { return lipgloss.Width(s) }

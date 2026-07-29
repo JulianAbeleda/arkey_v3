@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -96,6 +97,14 @@ func (m Model) activateLocal(parent context.Context, generation uint64, v ModelS
 		return localActivatedMsg{generation: generation, status: s, err: err}
 	}
 }
+func (m Model) unloadLocal(parent context.Context, generation uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		s, err := m.services.UnloadLocal(ctx)
+		return localUnloadedMsg{generation: generation, status: s, err: err}
+	}
+}
 func (m Model) scanGPU(parent context.Context, generation uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
@@ -179,6 +188,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = x.status
 			m.notice = "Local route is ready and selected."
 		}
+	case localUnloadedMsg:
+		if x.generation != m.generation {
+			break
+		}
+		m.finishOperation()
+		if x.err != nil {
+			m.errText = x.err.Error()
+		} else {
+			m.status = x.status
+			m.notice = "Local model unloaded. Saved model selection is unchanged."
+		}
 	case gpuScannedMsg:
 		if x.generation != m.generation {
 			break
@@ -214,6 +234,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.move(1)
 		case "left", "esc", "backspace", "b":
 			m.back()
+		case "d":
+			if m.screen == modelsScreen {
+				cmds = append(cmds, m.unloadSelected())
+			}
 		case "right", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
 				m.cursors[m.screen] = int(key[0] - '1')
@@ -222,6 +246,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, tea.Batch(cmds...)
+}
+
+func (m *Model) unloadSelected() tea.Cmd {
+	if !m.status.LocalActive || len(m.models) == 0 {
+		m.notice = "No local model process is active."
+		return nil
+	}
+	cursor := m.cursors[modelsScreen]
+	if cursor < 0 || cursor >= len(m.models) || !sameModel(m.models[cursor].Path, m.status.LoadedModel) {
+		m.notice = "Move to the loaded model before unloading it."
+		return nil
+	}
+	generation, ctx := m.begin()
+	return tea.Batch(m.spinner.Tick, m.unloadLocal(ctx, generation))
+}
+
+func sameModel(left, right string) bool {
+	return left != "" && right != "" && filepath.Clean(left) == filepath.Clean(right)
 }
 
 func (m *Model) push(next screen) {
@@ -349,19 +391,29 @@ func (m Model) items() []ui.Item {
 		return []ui.Item{{Key: "1", Label: "Arkey Codex (modded)", Detail: "custom client, not official Codex", State: m.selectedModel()}}
 	case configScreen:
 		return []ui.Item{
-			{Key: "1", Label: "Local", Detail: "runtime → installed model", State: m.status.Route.LocalRuntime},
+			{Key: "1", Label: "Local", Detail: "runtime → installed model", State: m.localRuntimeState()},
 			{Key: "2", Label: "Frontier", Detail: "hosted AI provider", State: m.status.Route.Backend},
 			{Key: "3", Label: "GPU Auto-scan", Detail: "detect and align llama.cpp", State: m.status.GPU},
 		}
 	case localScreen:
 		return []ui.Item{
 			{Key: "1", Label: "tinygrad", Detail: "coming later · unavailable", State: "development", Disabled: true},
-			{Key: "2", Label: "llama.cpp", Detail: "local GGUF server", State: m.status.Route.LocalRuntime},
+			{Key: "2", Label: "llama.cpp", Detail: "local GGUF server", State: m.localRuntimeState()},
 		}
 	case modelsScreen:
 		out := make([]ui.Item, len(m.models))
 		for i, v := range m.models {
-			out[i] = ui.Item{Key: fmt.Sprint(i + 1), Label: v.Name, Detail: v.Detail, State: v.Path}
+			state := "installed"
+			if sameModel(v.Path, m.status.Route.LocalModel) {
+				state = "selected"
+			}
+			if m.status.LocalActive && sameModel(v.Path, m.status.LoadedModel) {
+				state = "◐ starting"
+				if m.status.LocalLoaded {
+					state = "● loaded"
+				}
+			}
+			out[i] = ui.Item{Key: fmt.Sprint(i + 1), Label: v.Name, Detail: v.Detail, State: state}
 		}
 		return out
 	case frontierScreen:
@@ -373,6 +425,18 @@ func (m Model) items() []ui.Item {
 	}
 	return nil
 }
+func (m Model) localRuntimeState() string {
+	if m.status.LocalLoaded {
+		return "● loaded"
+	}
+	if m.status.LocalActive {
+		return "◐ starting"
+	}
+	if m.status.Route.LocalModel != "" {
+		return "stopped"
+	}
+	return "not selected"
+}
 func (m Model) title() string {
 	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER"}[m.screen]
 }
@@ -383,7 +447,7 @@ func (m Model) subtitle() string {
 	case tuiScreen:
 		return "Arkey-modified clients; Arkey Codex is not official Codex."
 	case modelsScreen:
-		return "Select a GGUF. It is committed only after health checks pass."
+		return "Select a GGUF to load. The active model is marked ● loaded."
 	}
 	return "Configure AI routes and local hardware alignment."
 }
@@ -396,11 +460,17 @@ func (m Model) View() tea.View {
 			busyLabel = m.spinner.View() + " Working…"
 		}
 	}
-	content := ui.Render(ui.Screen{Title: m.title(), Subtitle: m.subtitle(), Items: m.items(), Cursor: m.cursors[m.screen], Width: m.width, Height: m.height, Dark: m.dark, BusyLabel: busyLabel, Notice: m.notice, Error: m.errText})
+	content := ui.Render(ui.Screen{Title: m.title(), Subtitle: m.subtitle(), Items: m.items(), Cursor: m.cursors[m.screen], Width: m.width, Height: m.height, Dark: m.dark, BusyLabel: busyLabel, Notice: m.notice, Error: m.errText, Help: m.help()})
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.WindowTitle = "Arkey"
 	return v
+}
+func (m Model) help() string {
+	if m.screen == modelsScreen {
+		return "↑/↓ or j/k move · Enter/→ load · d unload · ←/Esc/b back · q quit"
+	}
+	return "↑/↓ or j/k move · Enter/→ select · ←/Esc/b back · q quit"
 }
 
 // LaunchPlan returns a copy of the request after Program.Run exits.
