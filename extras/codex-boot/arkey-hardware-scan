@@ -88,7 +88,7 @@ ensure_local_metadata() {
     additional_speed_tiers: [],
     availability_nux: null,
     upgrade: null,
-    base_instructions: "You are Arkey Local, an Arkey-modified coding assistant running through llama.cpp. Work carefully with the provided tools and keep responses concise.",
+    base_instructions: "You are a coding assistant running locally through llama.cpp. Work carefully with the provided tools.",
     supports_reasoning_summaries: true,
     default_reasoning_summary: "auto",
     support_verbosity: false,
