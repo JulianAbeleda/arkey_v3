@@ -42,6 +42,23 @@ func TestTOMLStrictDecodeAndQuotedComment(t *testing.T) {
 	}
 }
 
+func TestConfigWithoutClientDefaultsToCodex(t *testing.T) {
+	home := t.TempDir()
+	encoded, err := Encode(Default(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutClient := strings.Replace(string(encoded), "client = 'codex'\n", "", 1)
+	withoutClient = strings.Replace(withoutClient, "client = \"codex\"\n", "", 1)
+	decoded, err := Decode([]byte(withoutClient), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Client != "codex" {
+		t.Fatalf("client = %q, want codex", decoded.Client)
+	}
+}
+
 func TestLegacyMoonBridgeConfigPathIsPreserved(t *testing.T) {
 	home := t.TempDir()
 	legacyConfig := filepath.Join(home, "moon-bridge", "config.yml")

@@ -9,7 +9,7 @@ import (
 
 func TestBuildInjectsRouteAndExecCompatibility(t *testing.T) {
 	plan, err := Build(BuildOptions{
-		Parsed: cli.Options{CodexArgs: []string{"exec", "test"}},
+		Parsed: cli.Options{ClientArgs: []string{"exec", "test"}},
 		Model:  "arkey-local-llama", Binary: "/bin/true", CodexHome: "/tmp/codex", Environment: []string{"PATH=/bin"},
 	})
 	if err != nil {

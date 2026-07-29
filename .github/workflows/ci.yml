@@ -60,7 +60,8 @@ jobs:
             extras/codex-boot/install.sh \
             extras/codex-boot/test.sh \
             scripts/install.sh \
-            scripts/install-moonbridge-dependency.sh
+            scripts/install-moonbridge-dependency.sh \
+            scripts/snapshot-clients.sh
 
       - name: Run Arkey boot tests
         run: extras/codex-boot/test.sh

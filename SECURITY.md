@@ -1,8 +1,9 @@
 # Security
 
 Arkey v3 is a public source repository. Never commit API keys, provider tokens,
-Codex state, conversation history, local configuration, model weights, GPU
-state, logs, or generated runtime databases.
+Codex, Claude, or Kimi state, conversation history, locally snapshotted client
+executables, local configuration, model weights, GPU state, logs, or generated
+runtime databases.
 
 The committed MoonBridge file is a credential-free example. The installer
 copies it to `~/.config/arkey/moonbridge.yml` with mode `0600`; users configure

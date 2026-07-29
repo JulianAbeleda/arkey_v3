@@ -34,6 +34,8 @@ type Services struct {
 	Runtime          *arkeyruntime.Controller
 	MoonBridgeBinary string
 	CodexBinary      string
+	ClaudeBinary     string
+	KimiBinary       string
 	ModelCatalog     string
 	CandidateRoots   []string
 	CandidateServers []string
@@ -83,7 +85,10 @@ func New(home, workspace string) (*Services, error) {
 	runner := platform.ExecRunner{}
 	client := moonbridge.Client{BaseURL: "http://" + cfg.MoonBridge.Address, HTTP: &http.Client{Timeout: time.Second}}
 	moonbridgeBinary := envOr("ARKEY_MOONBRIDGE_SERVER", filepath.Join(paths.Home, ".local", "libexec", "arkey", "moonbridge"))
-	codexBinary := envOr("ARKEY_CODEX_BIN", envOr("CODEX_MOONBRIDGE_BIN", envOr("CODEX_BIN", filepath.Join(paths.Home, ".local", "bin", "codex-openai"))))
+	clientRoot := envOr("ARKEY_CLIENT_ROOT", filepath.Join(paths.Home, ".local", "libexec", "arkey", "clients"))
+	codexBinary := envOr("ARKEY_CODEX_BIN", envOr("CODEX_MOONBRIDGE_BIN", envOr("CODEX_BIN", filepath.Join(clientRoot, "codex", "codex"))))
+	claudeBinary := envOr("ARKEY_CLAUDE_BIN", filepath.Join(clientRoot, "claude", "claude"))
+	kimiBinary := envOr("ARKEY_KIMI_BIN", filepath.Join(clientRoot, "kimi", "kimi"))
 	modelCatalog := envOr("ARKEY_MODEL_CATALOG", filepath.Join(paths.Home, ".codex-moonbridge", "models_catalog.json"))
 	inspector := arkeyruntime.LinuxInspector{}
 	launcher := arkeyruntime.DirectLauncher{}
@@ -116,7 +121,7 @@ func New(home, workspace string) (*Services, error) {
 		Paths: paths, Store: store, Runner: runner,
 		Detector: gpu.Detector{Runner: runner}, GPUInspector: gpu.LDDInspector{Runner: runner},
 		BridgeClient: client, Bridge: bridge, Runtime: runtimeController,
-		MoonBridgeBinary: moonbridgeBinary, CodexBinary: codexBinary, ModelCatalog: modelCatalog,
+		MoonBridgeBinary: moonbridgeBinary, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, KimiBinary: kimiBinary, ModelCatalog: modelCatalog,
 		CandidateRoots: roots, CandidateServers: candidates,
 		CatalogLock: arkeyruntime.FileLock{Path: filepath.Join(paths.LocalStateDir(), "model-catalog.lock")},
 		Workspace:   workspace, config: cfg,
@@ -126,9 +131,16 @@ func New(home, workspace string) (*Services, error) {
 func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 	cfg := s.snapshot()
 	bridge := s.BridgeClient.Status(ctx, s.MoonBridgeBinary, cfg.MoonBridge.Config)
+	claudeStatus := executableStatus(s.ClaudeBinary)
+	if claudeStatus == "ready" {
+		claudeStatus = "bridge ingress pending"
+	}
 	status := app.Status{
-		Workspace: s.workspaceLabel(), Runtime: executableStatus(s.CodexBinary),
+		Workspace: s.workspaceLabel(), Runtime: executableStatus(s.clientBinary(cfg.Client)),
 		MoonBridge: string(bridge.State), ReducedMotion: cfg.UI.ReducedMotion,
+		Client: cfg.Client, Clients: map[string]string{
+			"codex": executableStatus(s.CodexBinary), "claude": claudeStatus, "kimi": executableStatus(s.KimiBinary),
+		},
 		Route: app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model},
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
@@ -148,6 +160,33 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 		}
 	}
 	return status, nil
+}
+
+func (s *Services) SelectClient(ctx context.Context, client string) (app.Status, error) {
+	client = strings.ToLower(client)
+	if err := ctx.Err(); err != nil {
+		return app.Status{}, err
+	}
+	if err := s.ValidateClient(client); err != nil {
+		return app.Status{}, err
+	}
+	if err := s.updateConfig(func(cfg *config.Config) { cfg.Client = client }); err != nil {
+		return app.Status{}, err
+	}
+	return s.Refresh(ctx)
+}
+
+func (s *Services) ValidateClient(client string) error {
+	if client != "codex" && client != "claude" && client != "kimi" {
+		return fmt.Errorf("unknown TUI client %q", client)
+	}
+	if executableStatus(s.clientBinary(client)) != "ready" {
+		return fmt.Errorf("official %s client has not been snapshotted", client)
+	}
+	if client == "claude" {
+		return errors.New("Arkey Claude is snapshotted, but MoonBridge Anthropic ingress is not implemented yet")
+	}
+	return nil
 }
 
 // UnloadLocal releases the active model from memory without forgetting the
@@ -301,7 +340,37 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 	return nil
 }
 
-func (s *Services) SelectedModel() string { return selectedModel(s.snapshot()) }
+func (s *Services) SelectedModel() string  { return selectedModel(s.snapshot()) }
+func (s *Services) SelectedClient() string { return s.snapshot().Client }
+
+func (s *Services) MoonBridgeURL() string {
+	address := s.snapshot().MoonBridge.Address
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return strings.TrimRight(address, "/")
+	}
+	return "http://" + strings.TrimRight(address, "/")
+}
+
+func (s *Services) ClientContextWindow() int {
+	cfg := s.snapshot()
+	if cfg.Mode == "local" {
+		return cfg.Local.ContextSize
+	}
+	return 262144
+}
+
+func (s *Services) ClientBinary(client string) string { return s.clientBinary(client) }
+
+func (s *Services) clientBinary(client string) string {
+	switch client {
+	case "claude":
+		return s.ClaudeBinary
+	case "kimi":
+		return s.KimiBinary
+	default:
+		return s.CodexBinary
+	}
+}
 
 func (s *Services) snapshot() config.Config {
 	s.mu.RLock()

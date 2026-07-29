@@ -22,6 +22,12 @@ type frontierSelectedMsg struct {
 	status     Status
 	err        error
 }
+type clientSelectedMsg struct {
+	generation uint64
+	client     string
+	status     Status
+	err        error
+}
 type localActivatedMsg struct {
 	generation uint64
 	status     Status

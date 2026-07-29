@@ -12,7 +12,7 @@ type Options struct {
 	ForceBoot            bool
 	SuppressBoot         bool
 	PreserveSessionModel bool
-	CodexArgs            []string
+	ClientArgs           []string
 	HasModel             bool
 	HasModelProvider     bool
 	ModelOverride        string
@@ -30,7 +30,7 @@ func Parse(args []string) (Options, error) {
 		case "--preserve-session-model":
 			out.PreserveSessionModel = true
 		default:
-			out.CodexArgs = append([]string(nil), args[i:]...)
+			out.ClientArgs = append([]string(nil), args[i:]...)
 			i = len(args)
 			continue
 		}
@@ -40,10 +40,10 @@ func Parse(args []string) (Options, error) {
 	if out.ForceBoot && out.SuppressBoot {
 		return Options{}, fmt.Errorf("%w: --boot and --no-boot cannot be used together", ErrUsage)
 	}
-	if out.ForceBoot && len(out.CodexArgs) > 0 {
-		return Options{}, fmt.Errorf("%w: --boot does not accept Codex arguments", ErrUsage)
+	if out.ForceBoot && len(out.ClientArgs) > 0 {
+		return Options{}, fmt.Errorf("%w: --boot does not accept client arguments", ErrUsage)
 	}
-	out.HasModel, out.HasModelProvider, out.ModelOverride = inspectOverrides(out.CodexArgs)
+	out.HasModel, out.HasModelProvider, out.ModelOverride = inspectOverrides(out.ClientArgs)
 	return out, nil
 }
 

@@ -39,6 +39,9 @@ esac
 if [[ "${ARKEY_SKIP_MOONBRIDGE_INSTALL:-0}" != 1 ]]; then
   "$repo_root/scripts/install-moonbridge-dependency.sh"
 fi
+if [[ "${ARKEY_SKIP_CLIENT_SNAPSHOTS:-0}" != 1 ]]; then
+  "$repo_root/scripts/snapshot-clients.sh"
+fi
 
 build_dir="$(mktemp -d)"
 cleanup() {

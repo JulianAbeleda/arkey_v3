@@ -161,6 +161,22 @@ func TestStartingModelIsShownWithoutClaimingItIsLoaded(t *testing.T) {
 	}
 }
 
+func TestTUIScreenShowsThreeExternalHarnesses(t *testing.T) {
+	m := New(nil)
+	m.screen = tuiScreen
+	m.status = Status{Client: "codex", Clients: map[string]string{"codex": "ready", "claude": "bridge ingress pending", "kimi": "incomplete"}}
+	items := m.items()
+	if len(items) != 3 {
+		t.Fatalf("TUI items = %d, want 3", len(items))
+	}
+	if items[0].Label != "Arkey Codex (modded harness)" || items[1].Label != "Arkey Claude (modded harness)" || items[2].Label != "Arkey Kimi (modded harness)" {
+		t.Fatalf("unexpected TUI labels: %#v", items)
+	}
+	if items[0].State != "selected · ready" || !items[1].Disabled || !items[2].Disabled {
+		t.Fatalf("unexpected TUI states: %#v", items)
+	}
+}
+
 func TestRefreshModelsInPlaceAndPreservesHighlightedModel(t *testing.T) {
 	m := New(nil)
 	m.screen = modelsScreen

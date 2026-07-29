@@ -2,19 +2,15 @@ package codex
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/JulianAbeleda/arkey_v3/internal/cli"
+	"github.com/JulianAbeleda/arkey_v3/internal/client"
 )
 
 const MoonBridgeProvider = `model_provider="moonbridge"`
 
-type Plan struct {
-	Binary string
-	Args   []string
-	Env    []string
-}
+type Plan = client.Plan
 
 type BuildOptions struct {
 	Parsed      cli.Options
@@ -31,7 +27,7 @@ func Build(opts BuildOptions) (Plan, error) {
 	if opts.Model == "" && !opts.Parsed.HasModel && !opts.Parsed.PreserveSessionModel {
 		return Plan{}, fmt.Errorf("selected model is required")
 	}
-	args := append([]string(nil), opts.Parsed.CodexArgs...)
+	args := append([]string(nil), opts.Parsed.ClientArgs...)
 	args = ensureExecSkip(args)
 	if !opts.Parsed.HasModel && !opts.Parsed.PreserveSessionModel {
 		args = append([]string{"-c", "model=" + opts.Model}, args...)
@@ -42,28 +38,17 @@ func Build(opts BuildOptions) (Plan, error) {
 	args = append([]string{"--sandbox", "workspace-write"}, args...)
 
 	env := append([]string(nil), opts.Environment...)
-	env = setEnv(env, "CODEX_HOME", opts.CodexHome)
-	env = setEnv(env, "CODEX_THREAD_ID", "")
+	env = client.SetEnv(env, "CODEX_HOME", opts.CodexHome)
+	env = client.SetEnv(env, "CODEX_THREAD_ID", "")
 	return Plan{Binary: opts.Binary, Args: args, Env: env}, nil
 }
 
 func DefaultBinary(home string) string {
-	return filepath.Join(home, ".local", "bin", "codex-openai")
+	return filepath.Join(home, ".local", "libexec", "arkey", "clients", "codex", "codex")
 }
 
 func DefaultHome(home string) string {
 	return filepath.Join(home, ".codex-moonbridge")
-}
-
-func (p Plan) Validate() error {
-	info, err := os.Stat(p.Binary)
-	if err != nil {
-		return fmt.Errorf("Arkey Codex binary: %w", err)
-	}
-	if info.IsDir() || info.Mode()&0o111 == 0 {
-		return fmt.Errorf("Arkey Codex binary is not executable: %s", p.Binary)
-	}
-	return nil
 }
 
 func ensureExecSkip(args []string) []string {
@@ -82,15 +67,4 @@ func ensureExecSkip(args []string) []string {
 		}
 	}
 	return args
-}
-
-func setEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	for i := range env {
-		if len(env[i]) >= len(prefix) && env[i][:len(prefix)] == prefix {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
 }

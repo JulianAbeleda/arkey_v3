@@ -13,10 +13,10 @@ func TestParseCompatibility(t *testing.T) {
 		want Options
 	}{
 		{name: "boot", args: []string{"--boot"}, want: Options{ForceBoot: true}},
-		{name: "direct", args: []string{"--no-boot", "exec", "test"}, want: Options{SuppressBoot: true, CodexArgs: []string{"exec", "test"}}},
-		{name: "payload flags preserved", args: []string{"exec", "--", "--boot", "--no-boot"}, want: Options{CodexArgs: []string{"exec", "--", "--boot", "--no-boot"}}},
-		{name: "model short", args: []string{"-m", "custom"}, want: Options{CodexArgs: []string{"-m", "custom"}, HasModel: true, ModelOverride: "custom"}},
-		{name: "config overrides", args: []string{"-c", "model=custom", "--config=model_provider=other"}, want: Options{CodexArgs: []string{"-c", "model=custom", "--config=model_provider=other"}, HasModel: true, HasModelProvider: true, ModelOverride: "custom"}},
+		{name: "direct", args: []string{"--no-boot", "exec", "test"}, want: Options{SuppressBoot: true, ClientArgs: []string{"exec", "test"}}},
+		{name: "payload flags preserved", args: []string{"exec", "--", "--boot", "--no-boot"}, want: Options{ClientArgs: []string{"exec", "--", "--boot", "--no-boot"}}},
+		{name: "model short", args: []string{"-m", "custom"}, want: Options{ClientArgs: []string{"-m", "custom"}, HasModel: true, ModelOverride: "custom"}},
+		{name: "config overrides", args: []string{"-c", "model=custom", "--config=model_provider=other"}, want: Options{ClientArgs: []string{"-c", "model=custom", "--config=model_provider=other"}, HasModel: true, HasModelProvider: true, ModelOverride: "custom"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

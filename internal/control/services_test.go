@@ -57,6 +57,35 @@ func TestSelectFrontierPersistsBeforeReturningStatus(t *testing.T) {
 	}
 }
 
+func TestSelectClientPersistsArkeySnapshot(t *testing.T) {
+	home := t.TempDir()
+	paths := platform.DefaultPaths(home)
+	store := config.Store{Path: paths.ConfigFile(), Home: home}
+	cfg := config.Default(home)
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+	services := &Services{
+		Paths: paths, Store: store, CodexBinary: "/bin/true", ClaudeBinary: "/bin/true", KimiBinary: "/bin/true",
+		BridgeClient: moonbridge.Client{BaseURL: server.URL}, config: cfg,
+	}
+	status, err := services.SelectClient(context.Background(), "kimi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Client != "kimi" || status.Clients["kimi"] != "ready" {
+		t.Fatalf("unexpected client status: %#v", status)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.Client != "kimi" {
+		t.Fatalf("persisted client = %q, err=%v", loaded.Client, err)
+	}
+}
+
 type scanRunner struct{}
 
 func (scanRunner) Run(_ context.Context, name string, _ ...string) ([]byte, error) {

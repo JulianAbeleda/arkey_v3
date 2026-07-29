@@ -89,6 +89,14 @@ func (m Model) selectFrontier(parent context.Context, generation uint64, name st
 		return frontierSelectedMsg{generation: generation, status: s, err: err}
 	}
 }
+func (m Model) selectClient(parent context.Context, generation uint64, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+		defer cancel()
+		s, err := m.services.SelectClient(ctx, name)
+		return clientSelectedMsg{generation: generation, client: name, status: s, err: err}
+	}
+}
 func (m Model) activateLocal(parent context.Context, generation uint64, v ModelSummary) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 6*time.Minute)
@@ -182,6 +190,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = x.status
 			m.notice = "Frontier route selected."
+		}
+	case clientSelectedMsg:
+		if x.generation != m.generation {
+			break
+		}
+		m.finishOperation()
+		if x.err != nil {
+			m.errText = x.err.Error()
+		} else {
+			m.status = x.status
+			m.launch = &LaunchPlan{Client: x.client, Model: m.selectedModel()}
+			cmds = append(cmds, tea.Quit)
 		}
 	case localActivatedMsg:
 		if x.generation != m.generation {
@@ -363,6 +383,10 @@ func (m *Model) activate() tea.Cmd {
 		m.cursors[m.screen] = 0
 	}
 	item := items[c]
+	if item.Disabled {
+		m.notice = item.Label + " is unavailable (" + item.State + ")."
+		return nil
+	}
 	switch m.screen {
 	case mainScreen:
 		if c == 0 {
@@ -378,8 +402,8 @@ func (m *Model) activate() tea.Cmd {
 			m.errText = "No usable AI route is selected. Open Config first."
 			return nil
 		}
-		m.launch = &LaunchPlan{Model: selected}
-		return tea.Quit
+		generation, ctx := m.begin()
+		return tea.Batch(m.spinner.Tick, m.selectClient(ctx, generation, []string{"codex", "claude", "kimi"}[c]))
 	case configScreen:
 		if c == 0 {
 			m.push(localScreen)
@@ -416,12 +440,16 @@ func (m Model) items() []ui.Item {
 	switch m.screen {
 	case mainScreen:
 		return []ui.Item{
-			{Key: "1", Label: "TUI", Detail: "choose the modded client", State: "Arkey Codex"},
+			{Key: "1", Label: "TUI", Detail: "choose the modded harness", State: clientLabel(m.status.Client)},
 			{Key: "2", Label: "Config", Detail: "routes and hardware", State: m.status.Route.Model},
 			{Key: "3", Label: "Exit", Detail: "close Arkey", State: "quit"},
 		}
 	case tuiScreen:
-		return []ui.Item{{Key: "1", Label: "Arkey Codex (modded)", Detail: "custom client, not official Codex", State: m.selectedModel()}}
+		return []ui.Item{
+			m.clientItem("1", "codex", "Arkey Codex (modded harness)"),
+			m.clientItem("2", "claude", "Arkey Claude (modded harness)"),
+			m.clientItem("3", "kimi", "Arkey Kimi (modded harness)"),
+		}
 	case configScreen:
 		return []ui.Item{
 			{Key: "1", Label: "Local", Detail: "runtime → installed model", State: m.localRuntimeState()},
@@ -478,11 +506,34 @@ func (m Model) subtitle() string {
 	case mainScreen:
 		return "Workspace: " + m.status.Workspace + " · Runtime: " + m.status.Runtime + " · MoonBridge: " + m.status.MoonBridge
 	case tuiScreen:
-		return "Arkey-modified clients; Arkey Codex is not official Codex."
+		return "Arkey-modified harnesses; upstream clients stay external and untouched."
 	case modelsScreen:
 		return "Select a GGUF to load. The active model is marked ● loaded."
 	}
 	return "Configure AI routes and local hardware alignment."
+}
+
+func (m Model) clientItem(key, name, label string) ui.Item {
+	availability := m.status.Clients[name]
+	if availability == "" {
+		availability = "missing"
+	}
+	state := availability
+	if m.status.Client == name {
+		state = "selected · " + availability
+	}
+	return ui.Item{Key: key, Label: label, Detail: "Arkey-owned snapshot + isolated state", State: state, Disabled: availability != "ready"}
+}
+
+func clientLabel(name string) string {
+	switch name {
+	case "claude":
+		return "Arkey Claude"
+	case "kimi":
+		return "Arkey Kimi"
+	default:
+		return "Arkey Codex"
+	}
 }
 func (m Model) View() tea.View {
 	busyLabel := ""

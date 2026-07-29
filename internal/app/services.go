@@ -11,6 +11,8 @@ type Route struct {
 // Status is a cached, display-safe health snapshot supplied by the integration layer.
 type Status struct {
 	Workspace, Runtime, MoonBridge, GPU string
+	Client                              string
+	Clients                             map[string]string
 	Route                               Route
 	LoadedModel                         string
 	LocalActive                         bool
@@ -24,13 +26,14 @@ type ModelSummary struct {
 }
 
 // LaunchPlan is consumed by cmd/arkey only after Program.Run restores the terminal.
-type LaunchPlan struct{ Model string }
+type LaunchPlan struct{ Client, Model string }
 
 // Services are narrow asynchronous boundaries. Implementations live in backend packages;
 // every method must honor ctx and return promptly when cancelled.
 type Services interface {
 	Refresh(context.Context) (Status, error)
 	DiscoverModels(context.Context) ([]ModelSummary, error)
+	SelectClient(context.Context, string) (Status, error)
 	SelectFrontier(context.Context, string) (Status, error)
 	ActivateLocal(context.Context, string, ModelSummary) (Status, error)
 	UnloadLocal(context.Context) (Status, error)
@@ -42,6 +45,7 @@ type NopServices struct{}
 
 func (NopServices) Refresh(context.Context) (Status, error)                { return Status{}, nil }
 func (NopServices) DiscoverModels(context.Context) ([]ModelSummary, error) { return nil, nil }
+func (NopServices) SelectClient(context.Context, string) (Status, error)   { return Status{}, nil }
 func (NopServices) SelectFrontier(context.Context, string) (Status, error) { return Status{}, nil }
 func (NopServices) ActivateLocal(context.Context, string, ModelSummary) (Status, error) {
 	return Status{}, nil

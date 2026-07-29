@@ -16,6 +16,7 @@ const CurrentVersion = 1
 
 type Config struct {
 	Version    int        `toml:"version"`
+	Client     string     `toml:"client"`
 	Mode       string     `toml:"mode"`
 	Frontier   Frontier   `toml:"frontier"`
 	Local      Local      `toml:"local"`
@@ -47,7 +48,7 @@ type UI struct {
 
 func Default(home string) Config {
 	d := filepath.Join(home, ".config", "arkey")
-	return Config{Version: 1, Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
+	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {
@@ -55,6 +56,9 @@ func (c Config) Validate() error {
 	}
 	if c.Mode != "frontier" && c.Mode != "local" {
 		return errors.New("invalid mode")
+	}
+	if c.Client != "codex" && c.Client != "claude" && c.Client != "kimi" {
+		return errors.New("invalid client")
 	}
 	if c.Frontier.Backend != "deepseek" && c.Frontier.Backend != "codex" && c.Frontier.Backend != "claude" {
 		return errors.New("invalid frontier backend")

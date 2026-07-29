@@ -1,8 +1,11 @@
 Arkey v3 and the contents of this repository are proprietary works of Julian Abeleda.
 
-Arkey Codex is a modified Codex-derived TUI and is not the official Codex client.
-MoonBridge is an external dependency maintained in a separate repository and is
-subject to its own licensing terms.
+Arkey's Codex, Claude, and Kimi integrations are modified harnesses around
+separately installed upstream clients. This repository does not include or
+redistribute those clients. Locally generated executable snapshots remain
+subject to their upstream licensing terms and are never part of this work.
+MoonBridge is an external dependency maintained in a separate repository and
+is subject to its own licensing terms.
 
 Status:
 - public source repository
