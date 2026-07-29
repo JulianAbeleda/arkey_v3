@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ARKEY_USER_HOME="${ARKEY_USER_HOME:-${HOME:?HOME is required}}"
+STATE_DIR="${ARKEY_LOCAL_STATE_DIR:-${XDG_STATE_HOME:-${ARKEY_USER_HOME}/.local/state}/arkey/local}"
+LLAMA_PORT="${ARKEY_LLAMA_PORT:-8080}"
+BOOT_LIB="${ARKEY_BOOT_LIB:-${ARKEY_USER_HOME}/.local/bin/arkey-boot-lib}"
+HARDWARE_SCAN="${ARKEY_HARDWARE_SCAN:-${ARKEY_USER_HOME}/.local/bin/arkey-hardware-scan}"
+ARKEY_CONFIG_DIR="${ARKEY_CONFIG_DIR:-${XDG_CONFIG_HOME:-${ARKEY_USER_HOME}/.config}/arkey}"
+MOONBRIDGE_SERVER="${ARKEY_MOONBRIDGE_SERVER:-${ARKEY_USER_HOME}/.local/libexec/arkey/moonbridge}"
+MOONBRIDGE_CONFIG="${MOONBRIDGE_CONFIG:-${ARKEY_CONFIG_DIR}/moonbridge.yml}"
+MOONBRIDGE_ADDR="${MOONBRIDGE_ADDR:-127.0.0.1:38440}"
+MOONBRIDGE_UNIT="${ARKEY_MOONBRIDGE_UNIT:-arkey-moonbridge.service}"
+LLAMA_UNIT="${ARKEY_LLAMA_UNIT:-arkey-llama.service}"
+
+mkdir -p "$STATE_DIR"
+
+if [[ ! -r "$BOOT_LIB" ]]; then
+  echo "Arkey boot configuration library is missing: $BOOT_LIB" >&2
+  exit 1
+fi
+# shellcheck source=arkey-boot-lib
+source "$BOOT_LIB"
+LLAMA_SERVER="${LLAMA_SERVER:-$(arkey_load_llama_server)}"
+
+pid_file() { printf '%s/%s.pid' "$STATE_DIR" "$1"; }
+model_file() { printf '%s/%s.model' "$STATE_DIR" "$1"; }
+log_file() { printf '%s/%s.log' "$STATE_DIR" "$1"; }
+
+managed_pid() {
+  local runtime="$1" file pid cmdline
+  file="$(pid_file "$runtime")"
+  [[ -f "$file" ]] || return 1
+  IFS= read -r pid < "$file" || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+  case "$runtime" in
+    llama) [[ "$cmdline" == *"llama-server"* ]] ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$pid"
+}
+
+runtime_health() {
+  case "$1" in
+    llama) curl -fsS --max-time 1 "http://127.0.0.1:${LLAMA_PORT}/v1/models" >/dev/null 2>&1 ;;
+    *) return 2 ;;
+  esac
+}
+
+runtime_aligned() {
+  local pid executable
+  [[ -n "$LLAMA_SERVER" ]] || return 1
+  pid="$(managed_pid llama)" || return 1
+  executable="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+  [[ "$executable" == "$(readlink -f "$LLAMA_SERVER" 2>/dev/null || true)" ]]
+}
+
+stop_managed() {
+  local runtime="$1" pid file
+  file="$(pid_file "$runtime")"
+  if [[ "$runtime" == llama ]] && command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "$LLAMA_UNIT"; then
+    systemctl --user stop "$LLAMA_UNIT"
+    [[ -f "$file" ]] && find "$file" -maxdepth 0 -type f -delete
+    return 0
+  fi
+  if ! pid="$(managed_pid "$runtime")"; then
+    [[ -f "$file" ]] && find "$file" -maxdepth 0 -type f -delete
+    return 0
+  fi
+  kill -TERM "$pid"
+  for _ in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$runtime server did not stop cleanly (pid $pid)" >&2
+    return 1
+  fi
+  find "$file" -maxdepth 0 -type f -delete
+}
+
+moonbridge_has_local_routes() {
+  local response
+  response="$(curl -fsS --max-time 1 "http://${MOONBRIDGE_ADDR}/v1/models" 2>/dev/null)" || return 1
+  grep -Fq 'arkey-local-llama' <<<"$response"
+}
+
+restart_moonbridge_if_needed() {
+  local pid cmdline pid_path="${STATE_DIR}/moonbridge.pid"
+  moonbridge_has_local_routes && return 0
+  [[ -x "$MOONBRIDGE_SERVER" ]] || {
+    echo "Pinned MoonBridge dependency is not installed: $MOONBRIDGE_SERVER" >&2
+    echo "Run extras/codex-boot/install.sh from Arkey v3." >&2
+    return 1
+  }
+  [[ -r "$MOONBRIDGE_CONFIG" ]] || {
+    echo "MoonBridge config is missing: $MOONBRIDGE_CONFIG" >&2
+    return 1
+  }
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "$MOONBRIDGE_UNIT"; then
+    systemctl --user stop "$MOONBRIDGE_UNIT"
+  fi
+  if [[ -f "$pid_path" ]]; then
+    IFS= read -r pid < "$pid_path" || true
+    if [[ "${pid:-}" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+      if [[ "$cmdline" != *"moonbridge"* || "$cmdline" != *"${MOONBRIDGE_CONFIG}"* ]]; then
+        echo "Refusing to stop unrecognized MoonBridge pid $pid." >&2
+        return 1
+      fi
+      kill -TERM "$pid" 2>/dev/null || true
+      for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    fi
+    find "$pid_path" -maxdepth 0 -type f -delete
+  fi
+  for _ in $(seq 1 50); do
+    curl -fsS --max-time 0.2 "http://${MOONBRIDGE_ADDR}/v1/models" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if curl -fsS --max-time 0.2 "http://${MOONBRIDGE_ADDR}/v1/models" >/dev/null 2>&1; then
+    echo "MoonBridge did not release ${MOONBRIDGE_ADDR}; refusing to start a second server." >&2
+    return 1
+  fi
+  printf 'Reloading MoonBridge local routes...\n'
+  if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    systemd-run --user --quiet --collect --unit="${MOONBRIDGE_UNIT%.service}" \
+      --property=Restart=on-failure \
+      "$MOONBRIDGE_SERVER" --config "$MOONBRIDGE_CONFIG"
+    for _ in $(seq 1 80); do
+      pid="$(systemctl --user show "$MOONBRIDGE_UNIT" --property=MainPID --value 2>/dev/null || true)"
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] && { printf '%s\n' "$pid" > "$pid_path"; break; }
+      sleep 0.1
+    done
+  else
+    nohup "$MOONBRIDGE_SERVER" --config "$MOONBRIDGE_CONFIG" >"$(log_file moonbridge)" 2>&1 &
+    pid=$!
+    printf '%s\n' "$pid" > "$pid_path"
+  fi
+  for _ in $(seq 1 80); do
+    moonbridge_has_local_routes && return 0
+    sleep 0.25
+  done
+  echo "MoonBridge local routes are unavailable after reload." >&2
+  return 1
+}
+
+wait_for_health() {
+  local runtime="$1" attempts="$2"
+  for _ in $(seq 1 "$attempts"); do
+    runtime_health "$runtime" && return 0
+    sleep 0.5
+  done
+  echo "$runtime server did not become healthy. Log: $(log_file "$runtime")" >&2
+  return 1
+}
+
+verify_acceleration() {
+  local vendor="$1" log
+  log="$(log_file llama)"
+  case "$vendor" in
+    nvidia) grep -Eq ' - CUDA[0-9]+[[:space:]]*:' "$log" ;;
+    amd) grep -Eq ' - (ROCm|HIP)[0-9]+[[:space:]]*:' "$log" ;;
+    *) return 1 ;;
+  esac
+}
+
+load_llama() {
+  local model="$1" current="" pid expected_vendor binary_backend
+  [[ -n "$LLAMA_SERVER" && -x "$LLAMA_SERVER" ]] || {
+    echo "No aligned llama-server is configured. Run Config → GPU Auto-scan first." >&2
+    return 1
+  }
+  expected_vendor="$(arkey_load_gpu_vendor)"
+  binary_backend="$($HARDWARE_SCAN backend "$LLAMA_SERVER")"
+  [[ "$expected_vendor" != unknown && "$binary_backend" == "$expected_vendor" ]] || {
+    echo "Configured llama-server is not aligned to the scanned GPU. Run Config → GPU Auto-scan again." >&2
+    return 1
+  }
+  [[ -f "$(model_file llama)" ]] && IFS= read -r current < "$(model_file llama)" || true
+  if runtime_health llama && runtime_aligned && [[ "$current" == "$model" ]]; then return 0; fi
+  if runtime_health llama && ! managed_pid llama >/dev/null; then
+    echo "Port $LLAMA_PORT is owned by a llama server outside Arkey; stop it first." >&2
+    return 1
+  fi
+  stop_managed llama
+  printf 'Loading %s with llama.cpp (this can take several minutes)...\n' "$(basename "$model")"
+  install -m 0644 /dev/null "$(log_file llama)"
+  if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    systemd-run --user --quiet --collect --unit="${LLAMA_UNIT%.service}" \
+      --property="StandardOutput=append:$(log_file llama)" \
+      --property="StandardError=append:$(log_file llama)" \
+      "$LLAMA_SERVER" --model "$model" --alias arkey-local --host 127.0.0.1 --port "$LLAMA_PORT" \
+      --ctx-size 32768 --gpu-layers all
+    for _ in $(seq 1 80); do
+      pid="$(systemctl --user show "$LLAMA_UNIT" --property=MainPID --value 2>/dev/null || true)"
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] && break
+      sleep 0.1
+    done
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { echo 'llama.cpp service did not produce a process id.' >&2; return 1; }
+  else
+    nohup "$LLAMA_SERVER" --model "$model" --alias arkey-local --host 127.0.0.1 --port "$LLAMA_PORT" \
+      --ctx-size 32768 --gpu-layers all >"$(log_file llama)" 2>&1 &
+    pid=$!
+  fi
+  printf '%s\n' "$pid" > "$(pid_file llama)"
+  wait_for_health llama 600
+  if ! verify_acceleration "$expected_vendor"; then
+    stop_managed llama
+    echo "llama.cpp did not initialize $expected_vendor acceleration; CPU fallback was refused. Log: $(log_file llama)" >&2
+    return 1
+  fi
+  printf '%s\n' "$model" > "$(model_file llama)"
+}
+
+start_runtime() {
+  local runtime="$1" model="$2"
+  [[ -f "$model" && "$model" == *.gguf ]] || { echo "Local GGUF not found: $model" >&2; return 2; }
+  case "$runtime" in
+    tinygrad) echo "tinygrad local serving is in development; use llama.cpp for now." >&2; return 3 ;;
+    llama) ;;
+    *) echo "Unknown local runtime: $runtime" >&2; return 2 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { echo "curl is required." >&2; return 1; }
+  restart_moonbridge_if_needed
+  load_llama "$model"
+  printf 'Arkey local route ready: arkey-local-%s -> %s\n' "$runtime" "$(basename "$model")"
+}
+
+case "${1:-}" in
+  start) [[ "$#" -eq 3 ]] || { echo "Usage: arkey-local-runtime start llama MODEL.gguf" >&2; exit 2; }; start_runtime "$2" "$3" ;;
+  status)
+    [[ "$#" -eq 2 || "$#" -eq 3 ]] || exit 2
+    [[ "$2" == llama ]] || exit 1
+    runtime_health llama && runtime_aligned || exit 1
+    if [[ "$#" -eq 3 ]]; then
+      current=""
+      [[ -f "$(model_file llama)" ]] && IFS= read -r current < "$(model_file llama)" || true
+      [[ "$current" == "$3" ]] || exit 1
+    fi ;;
+  stop) [[ "$#" -eq 2 && "$2" == llama ]] || exit 2; stop_managed llama ;;
+  reload-moonbridge) [[ "$#" -eq 1 ]] || exit 2; restart_moonbridge_if_needed ;;
+  *) echo "Usage: arkey-local-runtime {start llama MODEL.gguf|status llama|stop llama|reload-moonbridge}" >&2; exit 2 ;;
+esac

@@ -1,0 +1,32 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Credentials and private configuration
+secrets/
+*.pem
+*.p12
+*.key
+moonbridge.yml
+moonbridge.local.yml
+
+# Models and local AI state
+models/
+*.gguf
+*.safetensors
+.codex*/
+
+# Runtime output
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+dependencies/moon-bridge-arkey/
+
+# Editor and language tooling
+.idea/
+.vscode/
+target/
+__pycache__/
+*.pyc

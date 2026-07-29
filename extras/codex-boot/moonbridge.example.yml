@@ -1,0 +1,72 @@
+mode: "Transform"
+
+server:
+  addr: "127.0.0.1:38440"
+
+models:
+  deepseek-v4-pro:
+    context_window: 1000000
+    max_output_tokens: 384000
+    supports_reasoning_summaries: true
+    default_reasoning_level: "high"
+    default_reasoning_summary: "auto"
+    extensions:
+      deepseek_v4:
+        enabled: true
+  gpt-5.6-sol:
+    context_window: 400000
+    max_output_tokens: 128000
+    supports_reasoning_summaries: true
+  claude-sonnet-4-6:
+    context_window: 200000
+    max_output_tokens: 64000
+  arkey-local:
+    display_name: "Arkey Local"
+    context_window: 32768
+    max_output_tokens: 4096
+
+providers:
+  deepseek:
+    protocol: "anthropic"
+    base_url: "https://api.deepseek.com/anthropic"
+    api_key: "replace-with-deepseek-api-key"
+    offers:
+      - model: deepseek-v4-pro
+  openai:
+    protocol: "openai-response"
+    base_url: "https://api.openai.com/v1"
+    api_key: "replace-with-openai-api-key"
+    offers:
+      - model: gpt-5.6-sol
+  anthropic:
+    protocol: "anthropic"
+    base_url: "https://api.anthropic.com"
+    api_key: "replace-with-anthropic-api-key"
+    offers:
+      - model: claude-sonnet-4-6
+  llama-local:
+    protocol: "openai-chat"
+    local: true
+    base_url: "http://127.0.0.1:8080"
+    api_key: "local"
+    offers:
+      - model: arkey-local
+        upstream_name: arkey-local
+
+routes:
+  deepseek-v4-pro:
+    model: deepseek-v4-pro
+    provider: deepseek
+  gpt-5.6-sol:
+    model: gpt-5.6-sol
+    provider: openai
+  claude-sonnet-4-6:
+    model: claude-sonnet-4-6
+    provider: anthropic
+  arkey-local-llama:
+    model: arkey-local
+    provider: llama-local
+
+defaults:
+  model: deepseek-v4-pro
+  max_tokens: 65536
