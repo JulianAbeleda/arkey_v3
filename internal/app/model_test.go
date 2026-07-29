@@ -161,6 +161,45 @@ func TestStartingModelIsShownWithoutClaimingItIsLoaded(t *testing.T) {
 	}
 }
 
+func TestRefreshModelsInPlaceAndPreservesHighlightedModel(t *testing.T) {
+	m := New(nil)
+	m.screen = modelsScreen
+	m.stack = []screen{localScreen}
+	m.cursors[modelsScreen] = 1
+	m.models = []ModelSummary{
+		{Path: "/models/old.gguf", Name: "old"},
+		{Path: "/models/keep.gguf", Name: "keep"},
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Text: "r", Code: 'r'})
+	refreshing := updated.(Model)
+	if cmd == nil || !refreshing.busy {
+		t.Fatal("r did not begin model discovery")
+	}
+	if !strings.Contains(refreshing.help(), "r refresh") {
+		t.Fatalf("model help does not advertise refresh: %q", refreshing.help())
+	}
+
+	finished, _ := refreshing.Update(modelsDiscoveredMsg{
+		generation: refreshing.generation,
+		refresh:    true,
+		models: []ModelSummary{
+			{Path: "/models/keep.gguf", Name: "keep"},
+			{Path: "/models/new.gguf", Name: "new"},
+		},
+	})
+	result := finished.(Model)
+	if result.busy || result.screen != modelsScreen || len(result.stack) != 1 {
+		t.Fatalf("refresh changed navigation state: busy=%v screen=%v stack=%v", result.busy, result.screen, result.stack)
+	}
+	if result.cursors[modelsScreen] != 0 || result.models[0].Name != "keep" {
+		t.Fatalf("highlight was not preserved: cursor=%d models=%#v", result.cursors[modelsScreen], result.models)
+	}
+	if result.notice != "Local models refreshed." {
+		t.Fatalf("refresh notice = %q", result.notice)
+	}
+}
+
 // This is intentionally conservative: rendered ANSI escapes are absent in the
 // plain fallback test environment, and the production renderer measures them.
 func visibleWidth(s string) int { return lipgloss.Width(s) }

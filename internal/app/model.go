@@ -73,12 +73,12 @@ func (m Model) refresh(generation uint64) tea.Cmd {
 		return statusRefreshedMsg{generation: generation, status: s, err: err}
 	}
 }
-func (m Model) discover(parent context.Context, generation uint64) tea.Cmd {
+func (m Model) discover(parent context.Context, generation uint64, refresh bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		defer cancel()
 		v, err := m.services.DiscoverModels(ctx)
-		return modelsDiscoveredMsg{generation: generation, models: v, err: err}
+		return modelsDiscoveredMsg{generation: generation, models: v, refresh: refresh, err: err}
 	}
 }
 func (m Model) selectFrontier(parent context.Context, generation uint64, name string) tea.Cmd {
@@ -163,8 +163,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if x.err != nil {
 			m.errText = x.err.Error()
 		} else {
+			highlighted := m.highlightedModel()
 			m.models = x.models
-			m.push(modelsScreen)
+			if x.refresh {
+				m.restoreModelCursor(highlighted)
+				m.notice = "Local models refreshed."
+			} else {
+				m.push(modelsScreen)
+			}
 		}
 	case frontierSelectedMsg:
 		if x.generation != m.generation {
@@ -238,6 +244,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == modelsScreen {
 				cmds = append(cmds, m.unloadSelected())
 			}
+		case "r":
+			if m.screen == modelsScreen {
+				generation, ctx := m.begin()
+				cmds = append(cmds, m.spinner.Tick, m.discover(ctx, generation, true))
+			}
 		case "right", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
 				m.cursors[m.screen] = int(key[0] - '1')
@@ -264,6 +275,28 @@ func (m *Model) unloadSelected() tea.Cmd {
 
 func sameModel(left, right string) bool {
 	return left != "" && right != "" && filepath.Clean(left) == filepath.Clean(right)
+}
+
+func (m Model) highlightedModel() string {
+	cursor := m.cursors[modelsScreen]
+	if cursor < 0 || cursor >= len(m.models) {
+		return ""
+	}
+	return m.models[cursor].Path
+}
+
+func (m *Model) restoreModelCursor(path string) {
+	for index, model := range m.models {
+		if sameModel(model.Path, path) {
+			m.cursors[modelsScreen] = index
+			return
+		}
+	}
+	if len(m.models) == 0 {
+		m.cursors[modelsScreen] = 0
+	} else if m.cursors[modelsScreen] >= len(m.models) {
+		m.cursors[modelsScreen] = len(m.models) - 1
+	}
 }
 
 func (m *Model) push(next screen) {
@@ -361,7 +394,7 @@ func (m *Model) activate() tea.Cmd {
 			m.notice = "tinygrad is in development and unavailable."
 		} else {
 			generation, ctx := m.begin()
-			return tea.Batch(m.spinner.Tick, m.discover(ctx, generation))
+			return tea.Batch(m.spinner.Tick, m.discover(ctx, generation, false))
 		}
 	case modelsScreen:
 		generation, ctx := m.begin()
@@ -468,7 +501,7 @@ func (m Model) View() tea.View {
 }
 func (m Model) help() string {
 	if m.screen == modelsScreen {
-		return "↑/↓ or j/k move · Enter/→ load · d unload · ←/Esc/b back · q quit"
+		return "↑/↓ or j/k move · Enter/→ load · r refresh · d unload · ←/Esc/b back · q quit"
 	}
 	return "↑/↓ or j/k move · Enter/→ select · ←/Esc/b back · q quit"
 }

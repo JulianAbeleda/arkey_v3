@@ -37,7 +37,8 @@ working local runtime for now and listens on `127.0.0.1:8080`.
 The Bubble Tea model list marks the healthy in-memory model as `● loaded`, a
 remembered but stopped choice as `selected`, and a recognized process that has
 not become healthy as `◐ starting`. Move to the active row and press `d` to
-unload it. Unloading releases the runtime without forgetting the saved model.
+unload it, or press `r` anywhere in the model list to rescan installed GGUFs in
+place. Unloading releases the runtime without forgetting the saved model.
 
 GPU Auto-scan detects NVIDIA or AMD compute devices, verifies the linked backend
 of installed llama.cpp servers, and saves only a matching executable. It also
@@ -52,7 +53,8 @@ configuration is `~/.config/arkey/moonbridge.yml` with mode `0600`; its API keys
 and all Codex sessions remain outside Git.
 
 Use Up/Down to move, Right or Enter to select, Left to return to the previous
-menu, and `d` on the active model row to unload it.
+menu, `r` to refresh the local model list, and `d` on the active model row to
+unload it.
 
 ```bash
 arkey                    # Arkey boot menu
