@@ -1,8 +1,16 @@
 # Arkey v3 Bubble Tea migration scope
 
-Status: proposed implementation plan
+Status: compatibility release implemented; final Bash removal remains
 
 Scoped: 2026-07-29
+
+Implemented: 2026-07-29
+
+The Go application is now the default `arkey` executable. The Bash baseline is
+installed only as the explicitly named `arkey-legacy` rollback command for one
+compatibility release. The implementation uses direct `arkey-legacy` invocation
+instead of the proposed `ARKEY_LEGACY_UI` environment switch, which makes the
+rollback visible and prevents normal startup from silently entering Bash.
 
 Target: Linux first, with an architecture that does not prevent later platform support
 
@@ -352,6 +360,35 @@ Left, Escape, Backspace, and `b` pop one stack entry. The main screen ignores
 back. This single rule replaces the nested Bash loops that previously produced
 inconsistent left-arrow behavior.
 
+### 6.4 Renderer and latency invariants
+
+Bubble Tea v2's renderer owns the terminal for the entire interactive session.
+Arkey must not fight it:
+
+- return one complete, pure `tea.View` with `AltScreen = true` on every render;
+- never emit direct ANSI, `fmt.Print`, subprocess stdout/stderr, or log output
+  while the renderer is active;
+- never manually clear, home, or force-redraw the terminal;
+- never recreate Bubbles components inside `View`;
+- resize Bubbles components only from `tea.WindowSizeMsg` handling;
+- do not perform discovery, HTTP, config writes, or process checks because of a
+  resize or render;
+- debounce resize-triggered recomputation for roughly 75–150 ms and attach a
+  generation number so stale results cannot overwrite newer dimensions;
+- refresh cached status at most every 2–5 seconds while foreground and idle,
+  and suspend that polling during owned load/scan operations;
+- start spinner ticks only while an operation is active;
+- use `tea.Batch` only for independent effects and `tea.Sequence` when order is
+  required;
+- keep Bubble Tea's default renderer FPS initially; consider 30 FPS only after
+  terminal-byte and latency profiling demonstrates a benefit;
+- stop or cancel screen-specific commands when their screen generation is no
+  longer current.
+
+Synchronized terminal output is an automatic renderer capability, not a reason
+to rely on terminal-specific behavior. Testing must also pass on terminals that
+fall back to ordinary cursor-managed updates.
+
 ## 7. Configuration and state
 
 ### 7.1 Consolidated application config
@@ -681,12 +718,18 @@ No CI test requires a real GPU, provider key, GGUF, Codex session, or paid API.
 - Run the compiled program through a pseudo-terminal.
 - Send real Up/Down/Left/Right/Escape/Enter sequences.
 - Resize repeatedly while navigating.
+- Generate resize storms while model discovery, status refresh, and spinners
+  are active; stale results must be discarded and no duplicate operation may
+  start.
 - Cycle all screens hundreds of times and assert no stale or wrapped lines.
 - Verify panic, SIGINT, SIGTERM, and ordinary exit restore terminal modes.
 - Verify launching a fake Codex process leaves no Bubble Tea frame underneath.
 - Verify noninteractive stdout/stderr contain no terminal control sequences.
 - Test WezTerm directly, but do not add any WezTerm dependency.
 - Include tmux and a basic xterm-compatible terminal in the manual matrix.
+- Profile idle, scrolling, and loading states for CPU, allocations, and bytes
+  written to the pseudo-terminal; regressions require an explicit budget
+  decision rather than an arbitrary FPS increase.
 
 ### 12.5 Hardware smoke test
 

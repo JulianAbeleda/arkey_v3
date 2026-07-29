@@ -1,7 +1,8 @@
 # Arkey Codex Boot Mode
 
-This is an Arkey-owned boot menu that launches **Arkey Codex**, our modified
-Codex-derived TUI, through MoonBridge. It is not the official Codex client.
+Arkey v3 now uses an Arkey-owned Go/Bubble Tea boot menu that launches **Arkey
+Codex**, our modified Codex-derived TUI, through MoonBridge. It is not the
+official Codex client.
 WezTerm is not a dependency and does not own or install this mode; its terminal
 boot menu was used only as an interaction reference.
 
@@ -54,11 +55,13 @@ arkey --no-boot          # Arkey Codex directly through MoonBridge
 arkey exec "fix tests"   # noninteractive Arkey Codex through MoonBridge
 ```
 
-Install, validate, and test from the Arkey repository:
+Install, validate, and test from the Arkey repository. The Bash files in this
+directory remain temporarily as an explicit `arkey-legacy` rollback path; they
+are not the default application:
 
 ```bash
-extras/codex-boot/install.sh
-extras/codex-boot/install.sh --check
+scripts/install.sh
+scripts/install.sh --check
 extras/codex-boot/test.sh
 ```
 

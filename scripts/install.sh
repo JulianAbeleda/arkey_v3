@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+legacy_root="${repo_root}/extras/codex-boot"
+arkey_user_home="${ARKEY_USER_HOME:-${HOME:?HOME is required}}"
+install_dir="${ARKEY_INSTALL_DIR:-${arkey_user_home}/.local/bin}"
+config_dir="${ARKEY_CONFIG_DIR:-${XDG_CONFIG_HOME:-${arkey_user_home}/.config}/arkey}"
+moonbridge_config="${MOONBRIDGE_CONFIG:-${config_dir}/moonbridge.yml}"
+
+for dependency in go git; do
+  command -v "$dependency" >/dev/null 2>&1 || { echo "$dependency is required to install Arkey." >&2; exit 1; }
+done
+
+if [[ "${1:-}" == "--check" ]]; then
+  [[ "$#" -eq 1 ]] || exit 2
+  check_dir="$(mktemp -d)"
+  trap 'find "$check_dir" -type f -delete 2>/dev/null || true; find "$check_dir" -depth -type d -empty -delete 2>/dev/null || true' EXIT
+  (
+    cd "$repo_root"
+    GOTOOLCHAIN=auto go mod verify
+    GOTOOLCHAIN=auto go test ./...
+    GOTOOLCHAIN=auto go build -o "$check_dir/arkey" ./cmd/arkey
+  )
+  echo "Arkey Bubble Tea install check: ok"
+  exit 0
+fi
+if [[ "$#" -ne 0 ]]; then
+  echo "Usage: scripts/install.sh [--check]" >&2
+  exit 2
+fi
+
+selected_toolchain="$(cd "$repo_root" && GOTOOLCHAIN=auto go env GOVERSION)"
+case "$selected_toolchain" in
+  go1.2[5-9]*|go1.[3-9][0-9]*) ;;
+  *) echo "Arkey requires Go 1.25 or newer; selected: $selected_toolchain" >&2; exit 1 ;;
+esac
+
+if [[ "${ARKEY_SKIP_MOONBRIDGE_INSTALL:-0}" != 1 ]]; then
+  "$repo_root/scripts/install-moonbridge-dependency.sh"
+fi
+
+build_dir="$(mktemp -d)"
+cleanup() {
+  find "$build_dir" -type f -delete 2>/dev/null || true
+  find "$build_dir" -depth -type d -empty -delete 2>/dev/null || true
+}
+trap cleanup EXIT
+
+commit="$(git -C "$repo_root" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
+(
+  cd "$repo_root"
+  GOTOOLCHAIN=auto go build -trimpath \
+    -ldflags "-s -w -X main.version=3.0.0-dev -X main.commit=${commit}" \
+    -o "$build_dir/arkey" ./cmd/arkey
+)
+
+mkdir -p "$install_dir" "$config_dir"
+chmod 0700 "$config_dir"
+legacy_moonbridge_config="${arkey_user_home}/moon-bridge/config.yml"
+if [[ ! -e "$moonbridge_config" && ! -f "$legacy_moonbridge_config" ]]; then
+  install -m 0600 "$legacy_root/moonbridge.example.yml" "$moonbridge_config"
+  echo "Installed credential-free MoonBridge template: $moonbridge_config"
+elif [[ -f "$legacy_moonbridge_config" ]]; then
+  chmod 0600 "$legacy_moonbridge_config"
+  echo "Preserved existing MoonBridge configuration: $legacy_moonbridge_config"
+fi
+
+# One compatibility release keeps the Bash implementation under an explicit
+# name. Normal startup and all new runtime behavior use the Go binary.
+install -m 0755 "$legacy_root/arkey" "$install_dir/arkey-legacy"
+install -m 0755 "$legacy_root/arkey-boot-menu" "$install_dir/arkey-boot-menu"
+install -m 0755 "$legacy_root/arkey-local-runtime" "$install_dir/arkey-local-runtime"
+install -m 0755 "$legacy_root/arkey-hardware-scan" "$install_dir/arkey-hardware-scan"
+install -m 0755 "$legacy_root/codex-moonbridge" "$install_dir/codex-moonbridge"
+install -m 0644 "$legacy_root/arkey-boot-lib" "$install_dir/arkey-boot-lib"
+install -m 0755 "$build_dir/arkey" "$install_dir/arkey"
+
+"$install_dir/arkey" --version
+echo "Installed Bubble Tea Arkey: $install_dir/arkey"
+echo "Temporary rollback launcher: $install_dir/arkey-legacy"

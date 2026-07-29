@@ -12,7 +12,7 @@ moonbridge.yml
 moonbridge.local.yml
 
 # Models and local AI state
-models/
+/models/
 *.gguf
 *.safetensors
 .codex*/
@@ -28,5 +28,6 @@ dependencies/moon-bridge-arkey/
 .idea/
 .vscode/
 target/
+/arkey
 __pycache__/
 *.pyc

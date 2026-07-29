@@ -13,17 +13,38 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Verify lean repository boundary
         shell: bash
         run: |
           set -euo pipefail
-          allowed='^(.github|dependencies|extras|scripts)(/|$)|^docs/bubble-tea-migration-scope.md$|^(.gitignore|LICENSE|NOTICE|README.md|SECURITY.md)$'
+          allowed='^(.github|cmd|dependencies|docs|extras|internal|scripts)(/|$)|^(go.mod|go.sum|.gitignore|LICENSE|NOTICE|README.md|SECURITY.md)$'
           unexpected="$(git ls-files | grep -Ev "$allowed" || true)"
           if [[ -n "$unexpected" ]]; then
             echo 'Unexpected files outside the Arkey v3 boot-manager boundary:' >&2
             echo "$unexpected" >&2
+            exit 1
+          fi
+
+      - name: Reject private runtime material
+        shell: bash
+        run: |
+          set -euo pipefail
+          private_files="$(git ls-files '*.gguf' '*.safetensors' '*.pem' '*.key' 'config.toml' 'runtime.json' 'models_catalog.json')"
+          if [[ -n "$private_files" ]]; then
+            echo 'Private model, credential, or machine-state files are tracked:' >&2
+            echo "$private_files" >&2
+            exit 1
+          fi
+          if git grep -IEn -e '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|sk-[A-Za-z0-9_-]{24,}|(api[_-]?key|token)[[:space:]]*[:=][[:space:]]*["'"'][^$<{][^"'"']{15,}["'"']' -- ':!go.sum'; then
+            echo 'Possible embedded credential found in tracked source.' >&2
             exit 1
           fi
 
@@ -38,10 +59,26 @@ jobs:
             extras/codex-boot/codex-moonbridge \
             extras/codex-boot/install.sh \
             extras/codex-boot/test.sh \
+            scripts/install.sh \
             scripts/install-moonbridge-dependency.sh
 
       - name: Run Arkey boot tests
         run: extras/codex-boot/test.sh
+
+      - name: Verify Go modules
+        run: go mod verify
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run Go race tests
+        run: go test -race ./...
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Build Go Arkey
+        run: go build -o /tmp/arkey ./cmd/arkey
 
       - name: Validate pinned MoonBridge revision
         shell: bash
