@@ -137,6 +137,20 @@ func TestStartUsesExplicitLoopbackArgumentsAndCommitsAfterChecks(t *testing.T) {
 		t.Fatal("start time was not persisted")
 	}
 }
+// llama-server's auto slot count segfaults on load for qwen35-arch models
+// (Qwen3.6-27B), so Arkey must always pin a single slot.
+func TestLlamaArgsPinSingleSlot(t *testing.T) {
+	a := llamaArgs(cfg())
+	for i, v := range a {
+		if v == "--parallel" {
+			if i+1 < len(a) && a[i+1] == "1" {
+				return
+			}
+			t.Fatalf("--parallel not set to 1: %#v", a)
+		}
+	}
+	t.Fatalf("missing --parallel in argv %#v", a)
+}
 func TestStartRefusesUnmanagedPort(t *testing.T) {
 	c, _, in, _ := setup()
 	in.port = 99

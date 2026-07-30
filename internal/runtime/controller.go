@@ -352,8 +352,14 @@ func (c *Controller) cleanupStarted(manager string, pid int) {
 		_ = launcher.Terminate(cleanupCtx, pid)
 	}
 }
+// llamaArgs builds the llama-server command line.
+//
+// --parallel 1 is deliberate: llama-server's auto slot count (n_parallel = 4
+// with kv_unified) segfaults on load for qwen35-arch models such as
+// Qwen3.6-27B. Arkey serves one client at a time, so a single slot costs
+// nothing and keeps the runtime from crashing on those models.
 func llamaArgs(c Config) []string {
-	return []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all"}
+	return []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1"}
 }
 func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	if !c.owns(ctx, s) {
