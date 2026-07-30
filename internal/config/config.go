@@ -72,7 +72,10 @@ func (c Config) Validate() error {
 	if c.Local.Port < 1 || c.Local.Port > 65535 {
 		return errors.New("invalid local port")
 	}
-	if c.Local.ContextSize < 1 {
+	// Zero means "derive from hardware at launch" (see models.DeriveContextSize).
+	// A positive value is an explicit pin the operator has chosen; negative is
+	// always a mistake.
+	if c.Local.ContextSize < 0 {
 		return errors.New("invalid context size")
 	}
 	if c.Local.Model != "" {

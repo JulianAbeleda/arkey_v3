@@ -57,6 +57,26 @@ func TestSelectFrontierPersistsBeforeReturningStatus(t *testing.T) {
 	}
 }
 
+func TestClientMaxOutputTokensClamps(t *testing.T) {
+	cases := []struct {
+		contextSize int
+		want        int
+	}{
+		{contextSize: 1000, want: 4096},
+		{contextSize: 32768, want: 8192},
+		{contextSize: 1000000, want: 32768},
+	}
+	for _, tc := range cases {
+		cfg := config.Default("/home")
+		cfg.Mode = "local"
+		cfg.Local.ContextSize = tc.contextSize
+		services := &Services{config: cfg}
+		if got := services.ClientMaxOutputTokens(); got != tc.want {
+			t.Fatalf("ClientMaxOutputTokens() with ContextSize=%d = %d, want %d", tc.contextSize, got, tc.want)
+		}
+	}
+}
+
 func TestSelectClientPersistsArkeySnapshot(t *testing.T) {
 	home := t.TempDir()
 	paths := platform.DefaultPaths(home)

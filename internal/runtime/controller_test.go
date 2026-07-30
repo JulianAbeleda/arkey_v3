@@ -137,6 +137,29 @@ func TestStartUsesExplicitLoopbackArgumentsAndCommitsAfterChecks(t *testing.T) {
 		t.Fatal("start time was not persisted")
 	}
 }
+
+// A running server cannot change its context window, so a config with a
+// different ContextSize must not be satisfied by the healthy running process.
+func TestContextSizeChangeForcesRestart(t *testing.T) {
+	c, st, in, la := setup()
+	running := State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "x", StartTime: 9,
+		Model: "/m/a.gguf", Port: 8080, ContextSize: 32768, Server: "/bin/llama"}
+	st.s, st.err = running, nil
+	in.p[7] = Process{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "x", StartTime: 9}
+	c.Health = &fakeHealth{answers: []bool{true, false, true}}
+
+	same := cfg()
+	if !c.matchesHealthy(context.Background(), running, same) {
+		t.Fatal("identical context size should reuse the running server")
+	}
+	grown := cfg()
+	grown.ContextSize = 262144
+	if c.matchesHealthy(context.Background(), running, grown) {
+		t.Fatal("changed context size must not reuse the running server")
+	}
+	_ = la
+}
+
 // llama-server's auto slot count segfaults on load for qwen35-arch models
 // (Qwen3.6-27B), so Arkey must always pin a single slot.
 func TestLlamaArgsPinSingleSlot(t *testing.T) {

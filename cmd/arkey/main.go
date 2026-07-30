@@ -106,6 +106,7 @@ func run(args []string) int {
 		plan, err = codex.Build(codex.BuildOptions{
 			Parsed: parsed, Model: model, Binary: services.ClientBinary(selectedClient),
 			CodexHome: stateHome, Environment: os.Environ(),
+			ContextWindow: services.ClientContextWindow(), MaxOutputTokens: services.ClientMaxOutputTokens(),
 		})
 	}
 	if err != nil {

@@ -266,8 +266,12 @@ func (c *Controller) Stop(ctx context.Context) error {
 	}
 	return c.Store.Clear(ctx)
 }
+
+// ContextSize participates in the match: a running server cannot change its
+// window, so reusing one started with a different --ctx-size would silently
+// leave the client planning against a window the server does not have.
 func (c *Controller) matchesHealthy(ctx context.Context, s State, cfg Config) bool {
-	if s.Model != cfg.Model || s.Port != cfg.Port || !c.owns(ctx, s) {
+	if s.Model != cfg.Model || s.Port != cfg.Port || s.ContextSize != cfg.ContextSize || !c.owns(ctx, s) {
 		return false
 	}
 	ok, e := c.Health.LlamaHealthy(ctx, cfg.Port)
@@ -352,14 +356,29 @@ func (c *Controller) cleanupStarted(manager string, pid int) {
 		_ = launcher.Terminate(cleanupCtx, pid)
 	}
 }
+
 // llamaArgs builds the llama-server command line.
 //
 // --parallel 1 is deliberate: llama-server's auto slot count (n_parallel = 4
 // with kv_unified) segfaults on load for qwen35-arch models such as
 // Qwen3.6-27B. Arkey serves one client at a time, so a single slot costs
-// nothing and keeps the runtime from crashing on those models.
+// nothing and keeps the runtime from crashing on those models. Multiple slots
+// also make llama-server reassign turns by prompt similarity, which invalidates
+// context checkpoints and eventually fails to restore the KV cache mid-session.
+//
+// KVCacheType halves bytes-per-token against f16, which buys twice the context
+// for the same VRAM at a quality cost small enough to be invisible in practice.
+// Context length is the binding constraint for agent sessions, so that is the
+// right trade. KVCacheBytesPerElement must describe KVCacheType: context sizing
+// is computed from it, so the two drifting apart would size the window against
+// a cache the server is not actually running.
+const (
+	KVCacheType            = "q8_0"
+	KVCacheBytesPerElement = 1
+)
+
 func llamaArgs(c Config) []string {
-	return []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1"}
+	return []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
 }
 func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	if !c.owns(ctx, s) {

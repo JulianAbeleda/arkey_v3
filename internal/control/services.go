@@ -145,7 +145,7 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
 	if cfg.Local.Model != "" {
-		loadedModel, ready, err := s.Runtime.Loaded(ctx, runtimeConfig(cfg, s.Paths))
+		loadedModel, ready, err := s.Runtime.Loaded(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg)))
 		if err == nil && loadedModel != "" {
 			status.LocalActive = true
 			status.LoadedModel = loadedModel
@@ -237,7 +237,7 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 	}
 	cfg := s.snapshot()
 	cfg.Local.Model = canonical
-	if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths)); err != nil {
+	if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
 		if rollback != nil {
 			return app.Status{}, fmt.Errorf("load failed: %w; previous-model rollback failed: %v", err, rollback)
 		}
@@ -319,7 +319,7 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 		if cfg.Local.Model == "" {
 			return errors.New("no local GGUF is selected")
 		}
-		if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths)); err != nil {
+		if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
 			if rollback != nil {
 				return fmt.Errorf("local startup failed: %w; rollback failed: %v", err, rollback)
 			}
@@ -351,12 +351,31 @@ func (s *Services) MoonBridgeURL() string {
 	return "http://" + strings.TrimRight(address, "/")
 }
 
+// ClientContextWindow reports the window the client should plan against. On the
+// local route this must be the window llama-server is actually given, derived
+// the same way, or the client compacts against a budget that does not exist.
 func (s *Services) ClientContextWindow() int {
 	cfg := s.snapshot()
 	if cfg.Mode == "local" {
-		return cfg.Local.ContextSize
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return s.localContextSize(ctx, cfg)
 	}
 	return 262144
+}
+
+// ClientMaxOutputTokens derives a max-output budget from ClientContextWindow: a
+// max-output larger than the context window is incoherent and causes the client
+// to plan against a budget that cannot exist.
+func (s *Services) ClientMaxOutputTokens() int {
+	tokens := s.ClientContextWindow() / 4
+	if tokens < 4096 {
+		return 4096
+	}
+	if tokens > 32768 {
+		return 32768
+	}
+	return tokens
 }
 
 func (s *Services) ClientBinary(client string) string { return s.clientBinary(client) }
@@ -425,8 +444,35 @@ func frontierModel(backend string) string {
 	}
 }
 
-func runtimeConfig(cfg config.Config, paths platform.Paths) arkeyruntime.Config {
-	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: cfg.Local.ContextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log")}
+func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize int) arkeyruntime.Config {
+	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log")}
+}
+
+// fallbackContextSize is used only when the window cannot be derived: no GPU
+// reading, unreadable model metadata, or a card too small. It is deliberately
+// modest — a wrong-but-small window degrades a session, a wrong-but-large one
+// corrupts it, because the client plans against capacity that does not exist.
+const fallbackContextSize = 32768
+
+// localContextSize resolves the llama context window. A positive configured
+// value is an explicit operator pin and is always honoured. Zero means derive
+// it from this machine: total VRAM, the model's own size, and the KV cost per
+// token implied by the model's architecture.
+func (s *Services) localContextSize(ctx context.Context, cfg config.Config) int {
+	if cfg.Local.ContextSize > 0 {
+		return cfg.Local.ContextSize
+	}
+	if cfg.Local.Model == "" {
+		return fallbackContextSize
+	}
+	detected, err := s.Detector.Detect(ctx)
+	if err != nil {
+		return fallbackContextSize
+	}
+	if n := models.DeriveContextSizeForModel(cfg.Local.Model, detected.TotalVRAMBytes, arkeyruntime.KVCacheBytesPerElement); n > 0 {
+		return n
+	}
+	return fallbackContextSize
 }
 
 func (s *Services) workspaceLabel() string {
