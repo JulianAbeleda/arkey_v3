@@ -1,16 +1,24 @@
 # Arkey v3 Bubble Tea migration scope
 
-Status: compatibility release implemented; final Bash removal remains
+Status: migration complete; Bash runtime removed (Phase 6)
 
 Scoped: 2026-07-29
 
 Implemented: 2026-07-29
 
-The Go application is now the default `arkey` executable. The Bash baseline is
-installed only as the explicitly named `arkey-legacy` rollback command for one
-compatibility release. The implementation uses direct `arkey-legacy` invocation
-instead of the proposed `ARKEY_LEGACY_UI` environment switch, which makes the
-rollback visible and prevents normal startup from silently entering Bash.
+Bash removed: 2026-07-30
+
+The Go application is the only `arkey` executable. The compatibility release
+shipped the Bash baseline as an explicitly named `arkey-legacy` rollback
+command; that window has closed and `extras/codex-boot/` is gone. Only the
+installation and dependency shell scripts under `scripts/` remain, and
+`scripts/install.sh` now deletes any Bash helper copies an earlier install left
+on PATH.
+
+Legacy *state* migration is intentionally still present in
+`internal/config/migrate.go` and `internal/control/migrate.go`: it reads
+pre-Go configuration and adopts a running llama-server, which costs nothing
+once migrated and protects anyone upgrading from the Bash release.
 
 Target: Linux first, with an architecture that does not prevent later platform support
 

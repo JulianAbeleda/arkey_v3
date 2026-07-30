@@ -17,9 +17,9 @@ reference.
 - `cmd/arkey/`: the single Go application entry point
 - `internal/`: Bubble Tea UI, configuration, GPU, MoonBridge, and llama runtime
 - `dependencies/moonbridge.env`: the exact MoonBridge fork revision used by Arkey
+- `dependencies/moonbridge.example.yml`: credential-free MoonBridge config template
 - `scripts/install-moonbridge-dependency.sh`: verified dependency build/install
 - `scripts/snapshot-clients.sh`: local-only, hashed client snapshot installer
-- `extras/codex-boot/`: temporary Bash rollback implementation for one compatibility release
 
 MoonBridge remains an external, pinned dependency:
 [JulianAbeleda/moon-bridge-arkey](https://github.com/JulianAbeleda/moon-bridge-arkey).
@@ -83,9 +83,6 @@ until the pinned MoonBridge fork provides Anthropic Messages ingress; Arkey does
 not bypass that missing protocol boundary by modifying or redistributing Claude
 Code.
 
-See [`extras/codex-boot/README.md`](extras/codex-boot/README.md) for behavior,
-commands, and local runtime details.
-
 The implemented architecture and remaining compatibility-cutover work are
 defined in
 [`docs/bubble-tea-migration-scope.md`](docs/bubble-tea-migration-scope.md).
@@ -94,6 +91,5 @@ defined in
 
 ```bash
 scripts/install.sh --check
-extras/codex-boot/test.sh
 go test ./...
 ```

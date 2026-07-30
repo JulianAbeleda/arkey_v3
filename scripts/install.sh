@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-legacy_root="${repo_root}/extras/codex-boot"
 arkey_user_home="${ARKEY_USER_HOME:-${HOME:?HOME is required}}"
 install_dir="${ARKEY_INSTALL_DIR:-${arkey_user_home}/.local/bin}"
 config_dir="${ARKEY_CONFIG_DIR:-${XDG_CONFIG_HOME:-${arkey_user_home}/.config}/arkey}"
@@ -62,23 +61,24 @@ mkdir -p "$install_dir" "$config_dir"
 chmod 0700 "$config_dir"
 legacy_moonbridge_config="${arkey_user_home}/moon-bridge/config.yml"
 if [[ ! -e "$moonbridge_config" && ! -f "$legacy_moonbridge_config" ]]; then
-  install -m 0600 "$legacy_root/moonbridge.example.yml" "$moonbridge_config"
+  install -m 0600 "$repo_root/dependencies/moonbridge.example.yml" "$moonbridge_config"
   echo "Installed credential-free MoonBridge template: $moonbridge_config"
 elif [[ -f "$legacy_moonbridge_config" ]]; then
   chmod 0600 "$legacy_moonbridge_config"
   echo "Preserved existing MoonBridge configuration: $legacy_moonbridge_config"
 fi
 
-# One compatibility release keeps the Bash implementation under an explicit
-# name. Normal startup and all new runtime behavior use the Go binary.
-install -m 0755 "$legacy_root/arkey" "$install_dir/arkey-legacy"
-install -m 0755 "$legacy_root/arkey-boot-menu" "$install_dir/arkey-boot-menu"
-install -m 0755 "$legacy_root/arkey-local-runtime" "$install_dir/arkey-local-runtime"
-install -m 0755 "$legacy_root/arkey-hardware-scan" "$install_dir/arkey-hardware-scan"
-install -m 0755 "$legacy_root/codex-moonbridge" "$install_dir/codex-moonbridge"
-install -m 0644 "$legacy_root/arkey-boot-lib" "$install_dir/arkey-boot-lib"
 install -m 0755 "$build_dir/arkey" "$install_dir/arkey"
 
+# The Bash implementation was removed after its compatibility release. Clear
+# any helper copies an earlier install left behind so no stale rollback
+# command stays on PATH.
+for obsolete in arkey-legacy arkey-boot-menu arkey-local-runtime arkey-hardware-scan codex-moonbridge arkey-boot-lib; do
+  if [[ -e "$install_dir/$obsolete" ]]; then
+    rm -f "$install_dir/$obsolete"
+    echo "Removed obsolete Bash helper: $install_dir/$obsolete"
+  fi
+done
+
 "$install_dir/arkey" --version
-echo "Installed Bubble Tea Arkey: $install_dir/arkey"
-echo "Temporary rollback launcher: $install_dir/arkey-legacy"
+echo "Installed Arkey: $install_dir/arkey"

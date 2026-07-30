@@ -51,20 +51,9 @@ jobs:
       - name: Check shell syntax
         run: |
           bash -n \
-            extras/codex-boot/arkey \
-            extras/codex-boot/arkey-boot-lib \
-            extras/codex-boot/arkey-boot-menu \
-            extras/codex-boot/arkey-hardware-scan \
-            extras/codex-boot/arkey-local-runtime \
-            extras/codex-boot/codex-moonbridge \
-            extras/codex-boot/install.sh \
-            extras/codex-boot/test.sh \
             scripts/install.sh \
             scripts/install-moonbridge-dependency.sh \
             scripts/snapshot-clients.sh
-
-      - name: Run Arkey boot tests
-        run: extras/codex-boot/test.sh
 
       - name: Verify Go modules
         run: go mod verify
