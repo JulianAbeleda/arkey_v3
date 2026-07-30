@@ -1,0 +1,85 @@
+--- dist/index.js.orig
++++ dist/index.js
+@@ -79,18 +79,34 @@
+     month: 0,
+     lastReset: Date.now()
+ };
+-function checkRateLimit() {
+-    const now = Date.now();
+-    if (now - requestCount.lastReset > 1000) {
+-        requestCount.second = 0;
+-        requestCount.lastReset = now;
+-    }
+-    if (requestCount.second >= RATE_LIMIT.perSecond ||
+-        requestCount.month >= RATE_LIMIT.perMonth) {
+-        throw new Error('Rate limit exceeded');
+-    }
+-    requestCount.second++;
+-    requestCount.month++;
++// Patched for Arkey: the upstream limiter threw on the second call within a
++// one-second window, which turns a pacing problem into a tool failure. An agent
++// that fires several searches then sees errors will improvise a retry loop and
++// burn context. Queue instead: serialise callers and wait out the window. The
++// monthly quota is a real ceiling and still throws.
++let rateGate = Promise.resolve();
++const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
++async function checkRateLimit() {
++    const wait = rateGate.then(async () => {
++        for (;;) {
++            const now = Date.now();
++            if (now - requestCount.lastReset > 1000) {
++                requestCount.second = 0;
++                requestCount.lastReset = now;
++            }
++            if (requestCount.month >= RATE_LIMIT.perMonth) {
++                throw new Error('Rate limit exceeded: monthly quota');
++            }
++            if (requestCount.second < RATE_LIMIT.perSecond) {
++                requestCount.second++;
++                requestCount.month++;
++                return;
++            }
++            await sleep(1000 - (now - requestCount.lastReset) + 25);
++        }
++    });
++    rateGate = wait.catch(() => {});
++    return wait;
+ }
+ function isBraveWebSearchArgs(args) {
+     return (typeof args === "object" &&
+@@ -105,7 +121,7 @@
+         typeof args.query === "string");
+ }
+ async function performWebSearch(query, count = 10, offset = 0) {
+-    checkRateLimit();
++    await checkRateLimit();
+     const url = new URL('https://api.search.brave.com/res/v1/web/search');
+     url.searchParams.set('q', query);
+     url.searchParams.set('count', Math.min(count, 20).toString()); // API limit
+@@ -130,7 +146,7 @@
+     return results.map(r => `Title: ${r.title}\nDescription: ${r.description}\nURL: ${r.url}`).join('\n\n');
+ }
+ async function performLocalSearch(query, count = 5) {
+-    checkRateLimit();
++    await checkRateLimit();
+     // Initial search to get location IDs
+     const webUrl = new URL('https://api.search.brave.com/res/v1/web/search');
+     webUrl.searchParams.set('q', query);
+@@ -160,7 +176,7 @@
+     return formatLocalResults(poisData, descriptionsData);
+ }
+ async function getPoisData(ids) {
+-    checkRateLimit();
++    await checkRateLimit();
+     const url = new URL('https://api.search.brave.com/res/v1/local/pois');
+     ids.filter(Boolean).forEach(id => url.searchParams.append('ids', id));
+     const response = await fetch(url, {
+@@ -177,7 +193,7 @@
+     return poisResponse;
+ }
+ async function getDescriptionsData(ids) {
+-    checkRateLimit();
++    await checkRateLimit();
+     const url = new URL('https://api.search.brave.com/res/v1/local/descriptions');
+     ids.filter(Boolean).forEach(id => url.searchParams.append('ids', id));
+     const response = await fetch(url, {

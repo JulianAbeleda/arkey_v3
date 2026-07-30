@@ -53,6 +53,7 @@ jobs:
           bash -n \
             scripts/install.sh \
             scripts/install-moonbridge-dependency.sh \
+            scripts/install-brave-search-dependency.sh \
             scripts/snapshot-clients.sh
 
       - name: Verify Go modules

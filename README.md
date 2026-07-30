@@ -19,6 +19,9 @@ reference.
 - `dependencies/moonbridge.env`: the exact MoonBridge fork revision used by Arkey
 - `dependencies/moonbridge.example.yml`: credential-free MoonBridge config template
 - `scripts/install-moonbridge-dependency.sh`: verified dependency build/install
+- `dependencies/brave-search.env`: the exact Brave Search MCP server version used by Arkey
+- `dependencies/brave-search-rate-limit.patch`: patch that makes the client-side rate limiter queue instead of throwing
+- `scripts/install-brave-search-dependency.sh`: pinned Brave Search MCP server install/patch
 - `scripts/snapshot-clients.sh`: local-only, hashed client snapshot installer
 
 MoonBridge remains an external, pinned dependency:

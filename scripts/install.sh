@@ -38,6 +38,9 @@ esac
 if [[ "${ARKEY_SKIP_MOONBRIDGE_INSTALL:-0}" != 1 ]]; then
   "$repo_root/scripts/install-moonbridge-dependency.sh"
 fi
+if [[ "${ARKEY_SKIP_BRAVE_SEARCH_INSTALL:-0}" != 1 ]]; then
+  "$repo_root/scripts/install-brave-search-dependency.sh"
+fi
 if [[ "${ARKEY_SKIP_CLIENT_SNAPSHOTS:-0}" != 1 ]]; then
   "$repo_root/scripts/snapshot-clients.sh"
 fi
