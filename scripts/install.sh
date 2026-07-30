@@ -73,7 +73,12 @@ install -m 0755 "$build_dir/arkey" "$install_dir/arkey"
 # The Bash implementation was removed after its compatibility release. Clear
 # any helper copies an earlier install left behind so no stale rollback
 # command stays on PATH.
-for obsolete in arkey-legacy arkey-boot-menu arkey-local-runtime arkey-hardware-scan codex-moonbridge arkey-boot-lib; do
+#
+# arkey-local-runtime and codex-moonbridge are deliberately NOT removed: they
+# predate the boot manager and users may have their own wrappers exec'ing
+# codex-moonbridge, which in turn calls arkey-local-runtime to start
+# MoonBridge. Deleting them here would break tooling Arkey does not own.
+for obsolete in arkey-legacy arkey-boot-menu arkey-hardware-scan arkey-boot-lib; do
   if [[ -e "$install_dir/$obsolete" ]]; then
     rm -f "$install_dir/$obsolete"
     echo "Removed obsolete Bash helper: $install_dir/$obsolete"
