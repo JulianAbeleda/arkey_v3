@@ -445,7 +445,33 @@ func frontierModel(backend string) string {
 }
 
 func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize int) arkeyruntime.Config {
-	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log")}
+	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths)}
+}
+
+// qwen35 ships a chat template whose assistant branch renders prior tool-call
+// arguments through Jinja's `| safe` filter. Replayed tool calls come back
+// malformed, so the model sees corrupted examples of its own tool-calling and
+// degrades as a session accumulates calls: it starts announcing an action
+// ("Now let me read the file") instead of emitting the call, which ends the
+// agent loop. Measured on Qwen3.6-27B: with the stock template a resumed turn
+// produced 0 tool calls; with `| safe` removed the same task produced 14, 8, 13
+// and 18 across successive turns and completed. See llama.cpp#20837.
+//
+// Applied only to the affected architecture. Overriding the template for a model
+// that does not need it would be worse than the bug.
+func chatTemplateFor(model string, paths platform.Paths) string {
+	if model == "" {
+		return ""
+	}
+	g, err := models.ReadGGUF(model)
+	if err != nil || g.Architecture != "qwen35" {
+		return ""
+	}
+	override := filepath.Join(paths.Home, ".local", "libexec", "arkey", "templates", "qwen35-toolcall-fix.jinja")
+	if info, statErr := os.Stat(override); statErr != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return override
 }
 
 // fallbackContextSize is used only when the window cannot be derived: no GPU

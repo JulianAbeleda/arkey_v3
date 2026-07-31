@@ -27,6 +27,10 @@ type Config struct {
 	Server, Model, Vendor string
 	Port, ContextSize     int
 	LogPath               string
+	// ChatTemplate overrides the template embedded in the GGUF. Empty means use
+	// the model's own. Set only where the embedded template is known broken; see
+	// llamaArgs.
+	ChatTemplate string
 }
 
 func (c Config) validate() error {
@@ -378,7 +382,11 @@ const (
 )
 
 func llamaArgs(c Config) []string {
-	return []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
+	args := []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
+	if c.ChatTemplate != "" {
+		args = append(args, "--chat-template-file", c.ChatTemplate)
+	}
+	return args
 }
 func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	if !c.owns(ctx, s) {

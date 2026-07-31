@@ -160,6 +160,34 @@ func TestContextSizeChangeForcesRestart(t *testing.T) {
 	_ = la
 }
 
+// The chat-template override must be opt-in: overriding the template for a
+// model whose own template is fine would be worse than the bug it fixes.
+func TestLlamaArgsChatTemplateIsOptIn(t *testing.T) {
+	if got := llamaArgs(cfg()); contains(got, "--chat-template-file") {
+		t.Fatalf("template flag must be absent when unset: %#v", got)
+	}
+	c := cfg()
+	c.ChatTemplate = "/tmp/fix.jinja"
+	got := llamaArgs(c)
+	for i, v := range got {
+		if v == "--chat-template-file" {
+			if i+1 < len(got) && got[i+1] == "/tmp/fix.jinja" {
+				return
+			}
+			t.Fatalf("template flag has wrong value: %#v", got)
+		}
+	}
+	t.Fatalf("template flag missing when set: %#v", got)
+}
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
 // llama-server's auto slot count segfaults on load for qwen35-arch models
 // (Qwen3.6-27B), so Arkey must always pin a single slot.
 func TestLlamaArgsPinSingleSlot(t *testing.T) {
