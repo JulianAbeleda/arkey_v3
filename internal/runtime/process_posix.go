@@ -21,6 +21,26 @@ import (
 // by the Linux (procfs) and macOS backends, which differ only in how they read
 // process identity and manage the service.
 
+// ProcessAlive reports whether a PID is running at all, regardless of who owns
+// it. Signal 0 is the portable question: ESRCH means gone, EPERM means running
+// under another user -- which is still running.
+//
+// Ownership is a different question, and conflating the two is how a recorded
+// PID that has simply exited becomes indistinguishable from a stranger holding
+// the port. Those need opposite responses: clear the stale record, or refuse.
+func ProcessAlive(pid int) bool {
+	if pid < 1 {
+		return false
+	}
+	// The process group first, matching how Terminate signals: a server started
+	// with Setpgid outlives its leader's PID entry in some shells.
+	if err := syscall.Kill(-pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
 type DirectLauncher struct{}
 
 func (DirectLauncher) StartDirect(ctx context.Context, args []string, logPath string) (int, error) {
@@ -60,13 +80,7 @@ func (DirectLauncher) Terminate(ctx context.Context, pid int) error {
 		}
 		return err
 	}
-	alive := func() bool {
-		if err := syscall.Kill(-pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
-			return true
-		}
-		err := syscall.Kill(pid, 0)
-		return err == nil || errors.Is(err, syscall.EPERM)
-	}
+	alive := func() bool { return ProcessAlive(pid) }
 	if err := signal(syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}

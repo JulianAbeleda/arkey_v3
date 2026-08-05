@@ -45,6 +45,10 @@ type fakeInspect struct {
 	port   int
 }
 
+// Alive makes the fake answer the liveness question the way a real inspector
+// does: a PID absent from the table is gone, not merely unreadable.
+func (f *fakeInspect) Alive(pid int) bool { _, ok := f.p[pid]; return ok }
+
 func (f *fakeInspect) Process(_ context.Context, p int) (Process, error) {
 	v, ok := f.p[p]
 	if !ok {
@@ -290,5 +294,80 @@ func TestStopRejectsPidReuse(t *testing.T) {
 	}
 	if len(la.stopped) != 0 {
 		t.Fatal("must not signal reused pid")
+	}
+}
+
+// A record can outlive its process -- the server was killed, the box rebooted,
+// or it was started outside Arkey and later stopped. There is nothing to stop
+// in that case, and refusing wedges the controller: Stop() returns before
+// reaching Store.Clear, so the stale record survives and every later Start
+// trips over it. The only escape was deleting the state file by hand.
+func TestStopClearsARecordWhoseProcessIsGone(t *testing.T) {
+	c, st, in, la := setup()
+	st.s = State{PID: 795591, Executable: "/bin/llama", ArgsFingerprint: "x", StartTime: 9}
+	st.err = nil
+	delete(in.p, 795591) // never existed; the record outlived it
+
+	if e := c.Stop(context.Background()); e != nil {
+		t.Fatalf("stopping a dead record must succeed, got %v", e)
+	}
+	if !errors.Is(st.err, ErrNoState) {
+		t.Fatal("the stale record must be cleared, or the wedge persists")
+	}
+	if len(la.stopped) != 0 {
+		t.Fatal("must not signal a pid that does not exist")
+	}
+}
+
+// The other half: a process that IS running but is not ours must still be
+// refused. Self-healing must not become "kill whatever is there".
+func TestStopStillRefusesALiveStranger(t *testing.T) {
+	c, st, in, la := setup()
+	st.s = State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "ours", StartTime: 9}
+	st.err = nil
+	in.p[7] = Process{PID: 7, Executable: "/bin/other", ArgsFingerprint: "theirs", StartTime: 9}
+
+	if e := c.Stop(context.Background()); e == nil {
+		t.Fatal("a live process that is not ours must be refused")
+	}
+	if len(la.stopped) != 0 {
+		t.Fatal("must not signal a stranger")
+	}
+}
+
+// Without liveness information the controller cannot tell the two apart, and
+// the safe failure is to refuse: silently clearing a record we cannot vouch
+// for is a way to orphan a live server.
+func TestRefusesWhenLivenessIsUnknowable(t *testing.T) {
+	c, _, _, _ := setup()
+	c.Inspector = noLiveness{}
+	if c.recordIsStale(795591) {
+		t.Fatal("unknown liveness must not be reported as stale")
+	}
+}
+
+type noLiveness struct{}
+
+func (noLiveness) Process(context.Context, int) (Process, error) {
+	return Process{}, errors.New("gone")
+}
+func (noLiveness) PortOwner(context.Context, int) (int, error) { return 0, nil }
+
+// A gone PID is not automatically stale: systemd may have restarted the unit
+// under a new one. Recovery must be tried before the record is written off, or
+// a live server gets abandoned because its recorded PID moved.
+func TestSystemdRecoveryBeatsTheStalePath(t *testing.T) {
+	store := &memStore{s: State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "old", StartTime: 9, Model: "/models/old.gguf", Server: "/bin/llama", Port: 8080, Manager: "systemd"}}
+	inspector := &fakeInspect{
+		p:      map[int]Process{8: {PID: 8, Executable: "/bin/llama", ArgsFingerprint: "new", StartTime: 10}},
+		models: map[int]string{8: "/models/active.gguf"},
+	}
+	service := &fakeSystemd{pid: 8}
+	c := &Controller{Store: store, Inspector: inspector, Service: service, Lock: fakeLock{}}
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !service.stopped {
+		t.Fatal("pid 7 is gone but the unit is alive under 8: it must be stopped, not written off as stale")
 	}
 }

@@ -388,13 +388,51 @@ func llamaArgs(c Config) []string {
 	}
 	return args
 }
+// ProcessLiveness answers "is this PID running at all", separately from
+// "is it ours". An Inspector that implements it lets the controller tell a
+// record that outlived its process from a stranger holding the port.
+type ProcessLiveness interface {
+	Alive(pid int) bool
+}
+
+// recordIsStale reports that the PID in a stored State no longer exists, so
+// there is nothing left to stop.
+//
+// When liveness cannot be determined at all, this returns false: refusing
+// loudly is the safe failure. Silently clearing a record we cannot vouch for
+// would be a way to orphan a live server.
+func (c *Controller) recordIsStale(pid int) bool {
+	if pid < 1 {
+		return true
+	}
+	live, ok := c.Inspector.(ProcessLiveness)
+	if !ok {
+		return false
+	}
+	return !live.Alive(pid)
+}
+
 func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	if !c.owns(ctx, s) {
+		// Order matters. A recorded PID that is gone can mean two things, and
+		// systemd's is the recoverable one: the unit restarted under a new PID
+		// and currentSystemdState finds it. Ask that first, or a perfectly
+		// live server gets abandoned as "stale".
 		current, recognized := c.currentSystemdState(ctx, s)
-		if !recognized {
-			return fmt.Errorf("runtime: refusing to stop unrecognized process %d", s.PID)
+		switch {
+		case recognized:
+			s = current
+		case c.recordIsStale(s.PID):
+			// The record outlived the process -- killed, rebooted, or started
+			// outside Arkey and since stopped. There is nothing to stop, and
+			// refusing wedges the controller permanently: Stop() returns this
+			// error before reaching Store.Clear, so the stale record survives
+			// and every later Start trips over the same record and the same
+			// refusal. The only escape was deleting the state file by hand.
+			return nil
+		default:
+			return fmt.Errorf("runtime: refusing to stop process %d: it is running but is not the server this record describes (started outside Arkey, or the PID was reused)", s.PID)
 		}
-		s = current
 	}
 	if s.Manager == "systemd" && c.Service != nil && c.Service.Available(ctx) {
 		return c.Service.Stop(ctx, c.Unit)

@@ -217,3 +217,9 @@ func (s SystemdService) Stop(ctx context.Context, unit string) error {
 	_, e := s.Runner.Run(ctx, "systemctl", "--user", "stop", unit+".service")
 	return e
 }
+
+// Alive satisfies ProcessLiveness. Deliberately not derived from Process():
+// that reads /proc/<pid>/exe, which fails with EACCES for a live process owned
+// by another user -- indistinguishable, at the call site, from the ENOENT of a
+// process that is gone. Signal 0 answers the liveness question directly.
+func (LinuxInspector) Alive(pid int) bool { return ProcessAlive(pid) }
