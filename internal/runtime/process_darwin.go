@@ -146,3 +146,7 @@ func (DirectOnlyService) Start(context.Context, string, []string, string) (int, 
 	return 0, errors.New("runtime: managed service start is unavailable on macOS; use direct launch")
 }
 func (DirectOnlyService) Stop(context.Context, string) error { return nil }
+
+// Alive satisfies ProcessLiveness. Not derived from Process(), which shells out
+// to ps and cannot distinguish "no such pid" from any other ps failure.
+func (DarwinInspector) Alive(pid int) bool { return ProcessAlive(pid) }

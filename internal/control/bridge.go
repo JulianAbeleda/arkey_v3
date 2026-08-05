@@ -66,13 +66,21 @@ func (m *BridgeManager) EnsureRoute(ctx context.Context, route string) error {
 		online = true
 	}
 	if previous.PID > 0 {
-		if !m.owns(ctx, previous) {
-			return fmt.Errorf("refusing to replace unrecognized MoonBridge process %d", previous.PID)
+		switch {
+		case m.owns(ctx, previous):
+			if err = m.stop(ctx, previous); err != nil {
+				return err
+			}
+			_ = m.Store.Clear(ctx)
+		case m.recordIsStale(previous.PID):
+			// The record outlived the process. Refusing here would be
+			// permanent: the guard sits before Store.Clear, so the stale
+			// record is never removed and every later start hits it again,
+			// with no way out but deleting the state file by hand.
+			_ = m.Store.Clear(ctx)
+		default:
+			return fmt.Errorf("refusing to replace MoonBridge process %d: it is running but is not the process this record describes", previous.PID)
 		}
-		if err = m.stop(ctx, previous); err != nil {
-			return err
-		}
-		_ = m.Store.Clear(ctx)
 	} else if online {
 		return errors.New("MoonBridge is online without the required local route and is not owned by Arkey")
 	}
@@ -146,9 +154,27 @@ func (m *BridgeManager) owns(ctx context.Context, state arkeyruntime.State) bool
 	return err == nil && process.Executable == state.Executable && process.ArgsFingerprint == state.ArgsFingerprint && process.StartTime == state.StartTime
 }
 
+// recordIsStale reports that a stored PID no longer exists, so there is
+// nothing to stop. Unknown liveness returns false: refusing loudly is the safe
+// failure, since silently clearing a record we cannot vouch for would orphan a
+// live bridge.
+func (m *BridgeManager) recordIsStale(pid int) bool {
+	if pid < 1 {
+		return true
+	}
+	live, ok := m.Inspector.(arkeyruntime.ProcessLiveness)
+	if !ok {
+		return false
+	}
+	return !live.Alive(pid)
+}
+
 func (m *BridgeManager) stop(ctx context.Context, state arkeyruntime.State) error {
 	if !m.owns(ctx, state) {
-		return fmt.Errorf("refusing to stop unrecognized MoonBridge process %d", state.PID)
+		if m.recordIsStale(state.PID) {
+			return nil // nothing to stop; see recordIsStale
+		}
+		return fmt.Errorf("refusing to stop MoonBridge process %d: it is running but is not the process this record describes", state.PID)
 	}
 	if state.Manager == "systemd" && m.Service != nil && m.Service.Available(ctx) {
 		return m.Service.Stop(ctx, m.Unit)
