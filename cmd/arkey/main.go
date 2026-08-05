@@ -152,6 +152,6 @@ func shouldBoot(parsed cli.Options) bool {
 }
 
 func isTerminal(file *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(file.Fd()), unix.TCGETS)
+	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlReadTermios)
 	return err == nil
 }

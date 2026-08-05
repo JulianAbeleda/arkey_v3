@@ -3,9 +3,26 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// testLogDir is a canonical (symlink-free) private directory for llama log
+// paths. os.TempDir() itself is a symlink on macOS (/var -> /private/var), which
+// the runtime's own symlink guard rejects, so it is resolved once here.
+var testLogDir = func() string {
+	base, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		panic(err)
+	}
+	dir, err := os.MkdirTemp(base, "arkey-runtime-test-")
+	if err != nil {
+		panic(err)
+	}
+	return dir
+}()
 
 type memStore struct {
 	s     State
@@ -118,7 +135,7 @@ func setup() (*Controller, *memStore, *fakeInspect, *fakeLaunch) {
 	return c, st, in, la
 }
 func cfg() Config {
-	return Config{Server: "/bin/llama", Model: "/m/a.gguf", Vendor: "nvidia", Port: 8080, ContextSize: 32768, LogPath: "/tmp/log"}
+	return Config{Server: "/bin/llama", Model: "/m/a.gguf", Vendor: "nvidia", Port: 8080, ContextSize: 32768, LogPath: filepath.Join(testLogDir, "log")}
 }
 func TestStartUsesExplicitLoopbackArgumentsAndCommitsAfterChecks(t *testing.T) {
 	c, st, _, la := setup()

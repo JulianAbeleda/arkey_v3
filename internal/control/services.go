@@ -90,20 +90,20 @@ func New(home, workspace string) (*Services, error) {
 	claudeBinary := envOr("ARKEY_CLAUDE_BIN", filepath.Join(clientRoot, "claude", "claude"))
 	kimiBinary := envOr("ARKEY_KIMI_BIN", filepath.Join(clientRoot, "kimi", "kimi"))
 	modelCatalog := envOr("ARKEY_MODEL_CATALOG", filepath.Join(paths.Home, ".codex-moonbridge", "models_catalog.json"))
-	inspector := arkeyruntime.LinuxInspector{}
+	inspector := systemInspector(runner)
 	launcher := arkeyruntime.DirectLauncher{}
-	systemd := arkeyruntime.SystemdService{Runner: runner}
+	service := serviceManager(runner)
 	bridge := &BridgeManager{
 		Client: client, Binary: moonbridgeBinary, Config: cfg.MoonBridge.Config,
 		LogPath:   filepath.Join(paths.LogsDir(), "moonbridge.log"),
 		Store:     arkeyruntime.FileStore{Path: filepath.Join(paths.LocalStateDir(), "moonbridge.json")},
-		Inspector: inspector, Launcher: launcher, Service: systemd,
+		Inspector: inspector, Launcher: launcher, Service: service,
 	}
 	runtimeController := &arkeyruntime.Controller{
 		Store:     arkeyruntime.FileStore{Path: filepath.Join(paths.LocalStateDir(), "runtime.json")},
-		Inspector: inspector, Launcher: launcher, Service: systemd,
+		Inspector: inspector, Launcher: launcher, Service: service,
 		Health:     arkeyruntime.HTTPHealth{Client: &http.Client{Timeout: time.Second}},
-		MoonBridge: bridge, Backend: arkeyruntime.CommandBackend{Runner: runner},
+		MoonBridge: bridge, Backend: libraryBackend(runner),
 		Lock: arkeyruntime.FileLock{Path: filepath.Join(paths.LocalStateDir(), "operation.lock")},
 	}
 	if err := migrateLegacyRuntime(context.Background(), paths, cfg, runner, inspector, runtimeController.Store); err != nil {

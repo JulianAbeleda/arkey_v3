@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+// TestMain canonicalizes TMPDIR so t.TempDir() yields symlink-free paths. On
+// macOS the system temp dir resolves through /tmp -> /private/tmp (and /var ->
+// /private/var), which the path-security guard rejects; real config/state
+// directories under the user's home are not symlinked, so this only affects
+// tests. It is a no-op where TMPDIR is already canonical (Linux).
+func TestMain(m *testing.M) {
+	if resolved, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		os.Setenv("TMPDIR", resolved)
+	}
+	os.Exit(m.Run())
+}
+
 func TestBuildAndWriteConfigUseIsolatedState(t *testing.T) {
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("theme = 'light'\n[loop_control]\nmax_steps_per_turn = 42\n"), 0o600); err != nil {

@@ -15,6 +15,18 @@ import (
 	arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
 )
 
+// TestMain canonicalizes TMPDIR so t.TempDir() yields symlink-free paths. On
+// macOS the system temp dir resolves through /tmp -> /private/tmp (and /var ->
+// /private/var), which the path-security guard rejects; real config/state
+// directories under the user's home are not symlinked, so this only affects
+// tests. It is a no-op where TMPDIR is already canonical (Linux).
+func TestMain(m *testing.M) {
+	if resolved, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		os.Setenv("TMPDIR", resolved)
+	}
+	os.Exit(m.Run())
+}
+
 func TestBridgeExistingRouteDoesNotRestart(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"arkey-local-llama"}]}`))
@@ -89,8 +101,15 @@ func TestSelectClientPersistsArkeySnapshot(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	}))
 	defer server.Close()
+	// A snapshotted client only needs to be a regular executable file (checked
+	// by os.Stat), so a hermetic 0755 file works on any OS; the hardcoded
+	// /bin/true does not exist on macOS.
+	bin := filepath.Join(home, "client")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	services := &Services{
-		Paths: paths, Store: store, CodexBinary: "/bin/true", ClaudeBinary: "/bin/true", KimiBinary: "/bin/true",
+		Paths: paths, Store: store, CodexBinary: bin, ClaudeBinary: bin, KimiBinary: bin,
 		BridgeClient: moonbridge.Client{BaseURL: server.URL}, config: cfg,
 	}
 	status, err := services.SelectClient(context.Background(), "kimi")
