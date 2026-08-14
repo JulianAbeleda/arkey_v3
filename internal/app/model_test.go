@@ -161,19 +161,25 @@ func TestStartingModelIsShownWithoutClaimingItIsLoaded(t *testing.T) {
 	}
 }
 
-func TestTUIScreenShowsThreeExternalHarnesses(t *testing.T) {
+func TestTUIScreenShowsFourExternalHarnesses(t *testing.T) {
 	m := New(nil)
 	m.screen = tuiScreen
-	m.status = Status{Client: "codex", Clients: map[string]string{"codex": "ready", "claude": "bridge ingress pending", "kimi": "incomplete"}}
+	m.status = Status{Client: "codex", Clients: map[string]string{
+		"codex": "ready", "claude": "bridge ingress pending", "kimi": "incomplete", "crush": "ready",
+	}}
 	items := m.items()
-	if len(items) != 3 {
-		t.Fatalf("TUI items = %d, want 3", len(items))
+	if len(items) != 4 {
+		t.Fatalf("TUI items = %d, want 4", len(items))
 	}
-	if items[0].Label != "Arkey Codex (modded harness)" || items[1].Label != "Arkey Claude (modded harness)" || items[2].Label != "Arkey Kimi (modded harness)" {
+	if items[0].Label != "Arkey Codex (modded harness)" || items[1].Label != "Arkey Claude (modded harness)" ||
+		items[2].Label != "Arkey Kimi (modded harness)" || items[3].Label != "Arkey Crush (modded harness)" {
 		t.Fatalf("unexpected TUI labels: %#v", items)
 	}
 	if items[0].State != "selected · ready" || !items[1].Disabled || !items[2].Disabled {
 		t.Fatalf("unexpected TUI states: %#v", items)
+	}
+	if items[3].Disabled || items[3].State != "ready" {
+		t.Fatalf("snapshotted Crush must be selectable: %#v", items[3])
 	}
 }
 

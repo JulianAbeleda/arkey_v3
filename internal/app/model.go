@@ -403,7 +403,7 @@ func (m *Model) activate() tea.Cmd {
 			return nil
 		}
 		generation, ctx := m.begin()
-		return tea.Batch(m.spinner.Tick, m.selectClient(ctx, generation, []string{"codex", "claude", "kimi"}[c]))
+		return tea.Batch(m.spinner.Tick, m.selectClient(ctx, generation, []string{"codex", "claude", "kimi", "crush"}[c]))
 	case configScreen:
 		if c == 0 {
 			m.push(localScreen)
@@ -449,6 +449,7 @@ func (m Model) items() []ui.Item {
 			m.clientItem("1", "codex", "Arkey Codex (modded harness)"),
 			m.clientItem("2", "claude", "Arkey Claude (modded harness)"),
 			m.clientItem("3", "kimi", "Arkey Kimi (modded harness)"),
+			m.clientItem("4", "crush", "Arkey Crush (modded harness)"),
 		}
 	case configScreen:
 		return []ui.Item{
@@ -531,6 +532,8 @@ func clientLabel(name string) string {
 		return "Arkey Claude"
 	case "kimi":
 		return "Arkey Kimi"
+	case "crush":
+		return "Arkey Crush"
 	default:
 		return "Arkey Codex"
 	}

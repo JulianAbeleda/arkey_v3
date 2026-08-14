@@ -5,7 +5,7 @@ Its Bubble Tea interface selects an Arkey-owned snapshot of an installed coding
 client, selects a local or frontier AI route, starts the required local runtime,
 and connects supported clients through MoonBridge.
 
-Arkey does not distribute Codex, Claude Code, or Kimi Code. The installer copies
+Arkey does not distribute Codex, Claude Code, Kimi Code, or Crush. The installer copies
 the user's existing official executables into a private Arkey libexec directory;
 the official installations and their state remain untouched. “Modded” refers to
 the Arkey harness, routing, and isolated configuration—not patched upstream code.
@@ -35,6 +35,7 @@ TUI
   Arkey Codex  (modded harness)
   Arkey Claude (modded harness; MoonBridge ingress pending)
   Arkey Kimi   (modded harness)
+  Arkey Crush  (modded harness)
 Config
   Local
     tinygrad     (in development; unavailable)
@@ -68,8 +69,8 @@ scripts/snapshot-clients.sh
 
 Snapshot executables and their `snapshot.env` manifests are machine-local and
 never committed. Source locations can be overridden with
-`ARKEY_CODEX_SOURCE_BIN`, `ARKEY_CLAUDE_SOURCE_BIN`, and
-`ARKEY_KIMI_SOURCE_BIN`.
+`ARKEY_CODEX_SOURCE_BIN`, `ARKEY_CLAUDE_SOURCE_BIN`,
+`ARKEY_KIMI_SOURCE_BIN`, and `ARKEY_CRUSH_SOURCE_BIN`.
 
 Generated configuration is stored outside the repository. Arkey writes
 `~/.config/arkey/config.toml`; MoonBridge uses
@@ -79,8 +80,19 @@ application state/logs live under `~/.local/state/arkey`. Models, API
 credentials, Codex state, sessions, logs, and machine-specific GPU state are
 never stored in this repository.
 
-Client state is isolated under `~/.codex-moonbridge`, `~/.claude-arkey`, and
-`~/.kimi-arkey`. Codex and Kimi use MoonBridge's OpenAI Responses ingress.
+Client state is isolated under `~/.codex-moonbridge`, `~/.claude-arkey`,
+`~/.kimi-arkey`, and `~/.crush-arkey`. Codex and Kimi use MoonBridge's OpenAI
+Responses ingress. Crush speaks OpenAI Chat Completions and uses MoonBridge's
+`/v1/chat/completions` ingress; its config and session state are pinned inside
+the Arkey state home with `CRUSH_GLOBAL_CONFIG` and `CRUSH_GLOBAL_DATA`, so the
+official `~/.config/crush` installation is untouched.
+
+Crush cannot use the Codex frontier: MoonBridge converts the Chat Completions
+ingress into Anthropic, Google GenAI and OpenAI Chat upstreams, but an OpenAI
+Responses upstream is only reachable by verbatim passthrough from the Responses
+ingress. Arkey refuses that combination before launch rather than failing on
+every request.
+
 Claude is snapshotted and isolated but intentionally unavailable in the menu
 until the pinned MoonBridge fork provides Anthropic Messages ingress; Arkey does
 not bypass that missing protocol boundary by modifying or redistributing Claude

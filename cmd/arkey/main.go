@@ -15,6 +15,7 @@ import (
 	"github.com/JulianAbeleda/arkey_v3/internal/client"
 	"github.com/JulianAbeleda/arkey_v3/internal/codex"
 	"github.com/JulianAbeleda/arkey_v3/internal/control"
+	"github.com/JulianAbeleda/arkey_v3/internal/crush"
 	"github.com/JulianAbeleda/arkey_v3/internal/kimi"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	"golang.org/x/sys/unix"
@@ -87,6 +88,10 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "Arkey client:", err)
 		return 1
 	}
+	if err = services.ValidateRoute(selectedClient); err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey route:", err)
+		return 1
+	}
 	stateHome := client.StateHome(home, selectedClient)
 	if err = platform.EnsurePrivateDir(stateHome); err != nil {
 		fmt.Fprintln(os.Stderr, "Arkey client state:", err)
@@ -98,6 +103,11 @@ func run(args []string) int {
 		plan, err = claude.Build(claude.BuildOptions{
 			Parsed: parsed, Model: model, Binary: services.ClientBinary(selectedClient),
 			StateHome: stateHome, BridgeURL: services.MoonBridgeURL(), BridgeToken: os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), Environment: os.Environ(),
+		})
+	case client.Crush:
+		plan, err = crush.Build(crush.BuildOptions{
+			Parsed: parsed, Binary: services.ClientBinary(selectedClient),
+			StateHome: stateHome, Environment: os.Environ(),
 		})
 	case client.Kimi:
 		plan, err = kimi.Build(kimi.BuildOptions{Parsed: parsed, Binary: services.ClientBinary(selectedClient), StateHome: stateHome, Environment: os.Environ()})
@@ -122,6 +132,13 @@ func run(args []string) int {
 	if err = services.PrepareLaunch(ctx, model); err != nil {
 		fmt.Fprintln(os.Stderr, "Arkey route:", err)
 		return 1
+	}
+	if selectedClient == client.Crush {
+		if err = crush.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model,
+			services.ClientContextWindow(), services.ClientMaxOutputTokens()); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey Crush configuration:", err)
+			return 1
+		}
 	}
 	if selectedClient == client.Kimi {
 		if err = kimi.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model, services.ClientContextWindow()); err != nil {

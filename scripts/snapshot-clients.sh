@@ -63,5 +63,6 @@ snapshot_client() (
 snapshot_client codex "${ARKEY_CODEX_SOURCE_BIN:-${arkey_user_home}/.local/bin/codex}"
 snapshot_client claude "${ARKEY_CLAUDE_SOURCE_BIN:-${arkey_user_home}/.local/bin/claude}"
 snapshot_client kimi "${ARKEY_KIMI_SOURCE_BIN:-${arkey_user_home}/.kimi-code/bin/kimi}"
+snapshot_client crush "${ARKEY_CRUSH_SOURCE_BIN:-${arkey_user_home}/.local/bin/crush}"
 
 printf 'Arkey-owned client snapshots: %s\n' "$client_root"

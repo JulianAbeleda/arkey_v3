@@ -11,6 +11,7 @@ const (
 	Codex  = "codex"
 	Claude = "claude"
 	Kimi   = "kimi"
+	Crush  = "crush"
 )
 
 type Plan struct {
@@ -47,6 +48,8 @@ func StateHome(home, name string) string {
 		return filepath.Join(home, ".claude-arkey")
 	case Kimi:
 		return filepath.Join(home, ".kimi-arkey")
+	case Crush:
+		return filepath.Join(home, ".crush-arkey")
 	default:
 		return filepath.Join(home, ".codex-moonbridge")
 	}

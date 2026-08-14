@@ -36,6 +36,7 @@ type Services struct {
 	CodexBinary      string
 	ClaudeBinary     string
 	KimiBinary       string
+	CrushBinary      string
 	ModelCatalog     string
 	CandidateRoots   []string
 	CandidateServers []string
@@ -89,6 +90,7 @@ func New(home, workspace string) (*Services, error) {
 	codexBinary := envOr("ARKEY_CODEX_BIN", envOr("CODEX_MOONBRIDGE_BIN", envOr("CODEX_BIN", filepath.Join(clientRoot, "codex", "codex"))))
 	claudeBinary := envOr("ARKEY_CLAUDE_BIN", filepath.Join(clientRoot, "claude", "claude"))
 	kimiBinary := envOr("ARKEY_KIMI_BIN", filepath.Join(clientRoot, "kimi", "kimi"))
+	crushBinary := envOr("ARKEY_CRUSH_BIN", filepath.Join(clientRoot, "crush", "crush"))
 	modelCatalog := envOr("ARKEY_MODEL_CATALOG", filepath.Join(paths.Home, ".codex-moonbridge", "models_catalog.json"))
 	inspector := systemInspector(runner)
 	launcher := arkeyruntime.DirectLauncher{}
@@ -121,7 +123,7 @@ func New(home, workspace string) (*Services, error) {
 		Paths: paths, Store: store, Runner: runner,
 		Detector: gpu.Detector{Runner: runner}, GPUInspector: gpu.LDDInspector{Runner: runner},
 		BridgeClient: client, Bridge: bridge, Runtime: runtimeController,
-		MoonBridgeBinary: moonbridgeBinary, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, KimiBinary: kimiBinary, ModelCatalog: modelCatalog,
+		MoonBridgeBinary: moonbridgeBinary, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, KimiBinary: kimiBinary, CrushBinary: crushBinary, ModelCatalog: modelCatalog,
 		CandidateRoots: roots, CandidateServers: candidates,
 		CatalogLock: arkeyruntime.FileLock{Path: filepath.Join(paths.LocalStateDir(), "model-catalog.lock")},
 		Workspace:   workspace, config: cfg,
@@ -139,7 +141,8 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 		Workspace: s.workspaceLabel(), Runtime: executableStatus(s.clientBinary(cfg.Client)),
 		MoonBridge: string(bridge.State), ReducedMotion: cfg.UI.ReducedMotion,
 		Client: cfg.Client, Clients: map[string]string{
-			"codex": executableStatus(s.CodexBinary), "claude": claudeStatus, "kimi": executableStatus(s.KimiBinary),
+			"codex": executableStatus(s.CodexBinary), "claude": claudeStatus,
+			"kimi": executableStatus(s.KimiBinary), "crush": executableStatus(s.CrushBinary),
 		},
 		Route: app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model},
 	}
@@ -177,7 +180,7 @@ func (s *Services) SelectClient(ctx context.Context, client string) (app.Status,
 }
 
 func (s *Services) ValidateClient(client string) error {
-	if client != "codex" && client != "claude" && client != "kimi" {
+	if client != "codex" && client != "claude" && client != "kimi" && client != "crush" {
 		return fmt.Errorf("unknown TUI client %q", client)
 	}
 	if executableStatus(s.clientBinary(client)) != "ready" {
@@ -343,6 +346,23 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 func (s *Services) SelectedModel() string  { return selectedModel(s.snapshot()) }
 func (s *Services) SelectedClient() string { return s.snapshot().Client }
 
+// ValidateRoute reports whether the selected AI route can serve the given
+// client. Crush reaches MoonBridge through the OpenAI Chat Completions ingress,
+// and MoonBridge converts that ingress to Anthropic, Google GenAI and OpenAI
+// Chat upstreams — but not to an OpenAI Responses upstream, which it can only
+// pass through from the Responses ingress. Selecting the Codex frontier for
+// Crush would therefore fail on every request; refuse it before launch.
+func (s *Services) ValidateRoute(client string) error {
+	if client != "crush" {
+		return nil
+	}
+	cfg := s.snapshot()
+	if cfg.Mode == "frontier" && cfg.Frontier.Backend == "codex" {
+		return errors.New("Arkey Crush cannot use the Codex frontier: MoonBridge has no OpenAI Responses upstream adapter for the Chat Completions ingress. Choose DeepSeek, Claude, or a local model")
+	}
+	return nil
+}
+
 func (s *Services) MoonBridgeURL() string {
 	address := s.snapshot().MoonBridge.Address
 	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
@@ -386,6 +406,8 @@ func (s *Services) clientBinary(client string) string {
 		return s.ClaudeBinary
 	case "kimi":
 		return s.KimiBinary
+	case "crush":
+		return s.CrushBinary
 	default:
 		return s.CodexBinary
 	}

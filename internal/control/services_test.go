@@ -109,19 +109,21 @@ func TestSelectClientPersistsArkeySnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	services := &Services{
-		Paths: paths, Store: store, CodexBinary: bin, ClaudeBinary: bin, KimiBinary: bin,
+		Paths: paths, Store: store, CodexBinary: bin, ClaudeBinary: bin, KimiBinary: bin, CrushBinary: bin,
 		BridgeClient: moonbridge.Client{BaseURL: server.URL}, config: cfg,
 	}
-	status, err := services.SelectClient(context.Background(), "kimi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.Client != "kimi" || status.Clients["kimi"] != "ready" {
-		t.Fatalf("unexpected client status: %#v", status)
-	}
-	loaded, err := store.Load()
-	if err != nil || loaded.Client != "kimi" {
-		t.Fatalf("persisted client = %q, err=%v", loaded.Client, err)
+	for _, client := range []string{"kimi", "crush"} {
+		status, err := services.SelectClient(context.Background(), client)
+		if err != nil {
+			t.Fatalf("SelectClient(%q): %v", client, err)
+		}
+		if status.Client != client || status.Clients[client] != "ready" {
+			t.Fatalf("unexpected client status for %q: %#v", client, status)
+		}
+		loaded, err := store.Load()
+		if err != nil || loaded.Client != client {
+			t.Fatalf("persisted client = %q, err=%v", loaded.Client, err)
+		}
 	}
 }
 

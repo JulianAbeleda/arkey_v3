@@ -57,7 +57,7 @@ func (c Config) Validate() error {
 	if c.Mode != "frontier" && c.Mode != "local" {
 		return errors.New("invalid mode")
 	}
-	if c.Client != "codex" && c.Client != "claude" && c.Client != "kimi" {
+	if c.Client != "codex" && c.Client != "claude" && c.Client != "kimi" && c.Client != "crush" {
 		return errors.New("invalid client")
 	}
 	if c.Frontier.Backend != "deepseek" && c.Frontier.Backend != "codex" && c.Frontier.Backend != "claude" {
