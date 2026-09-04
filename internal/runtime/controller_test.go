@@ -284,6 +284,32 @@ func TestLoadedReportsActualModelAfterSystemdRestart(t *testing.T) {
 		t.Fatalf("model=%q loaded=%v err=%v", model, loaded, err)
 	}
 }
+
+func TestStartAdoptsRestartedSystemdPIDBeforePortOwnershipCheck(t *testing.T) {
+	store := &memStore{s: State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "old", StartTime: 9, Model: "/models/old.gguf", Server: "/bin/llama", Port: 8080, ContextSize: 32768, Manager: "systemd"}}
+	inspector := &fakeInspect{
+		p:      map[int]Process{8: {PID: 8, Executable: "/bin/llama", ArgsFingerprint: "new", StartTime: 10}},
+		models: map[int]string{8: "/models/old.gguf"},
+		port:   8,
+	}
+	service := &fakeSystemd{pid: 8}
+	controller := &Controller{
+		Store: store, Inspector: inspector, Service: service,
+		Health: &fakeHealth{answers: []bool{false, true}}, MoonBridge: fakeMoon{},
+		Backend: fakeBackend{true, true}, Lock: fakeLock{}, Clock: instant{}, Attempts: 2,
+	}
+
+	state, rollback, err := controller.Start(context.Background(), cfg())
+	if err != nil || rollback != nil {
+		t.Fatalf("start: %v rollback %v", err, rollback)
+	}
+	if !service.stopped {
+		t.Fatal("restarted systemd process was not adopted and stopped")
+	}
+	if state.Model != cfg().Model || !store.saved {
+		t.Fatalf("replacement model was not committed: %#v saved=%v", state, store.saved)
+	}
+}
 func TestStopRejectsPidReuse(t *testing.T) {
 	c, st, in, la := setup()
 	st.s = State{PID: 7, Executable: "/bin/llama", ArgsFingerprint: "old", StartTime: 9}

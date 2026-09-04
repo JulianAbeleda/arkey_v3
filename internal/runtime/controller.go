@@ -168,6 +168,14 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 	if loadErr != nil && !errors.Is(loadErr, ErrNoState) {
 		return State{}, nil, loadErr
 	}
+	// A systemd unit may have restarted after its state was persisted. Adopt
+	// the replacement PID before checking the configured port; otherwise our
+	// own restarted llama-server is incorrectly rejected as unmanaged.
+	if loadErr == nil && !c.owns(ctx, previous) {
+		if current, recognized := c.currentSystemdState(ctx, previous); recognized {
+			previous = current
+		}
+	}
 	if c.matchesHealthy(ctx, previous, cfg) {
 		return previous, nil, nil
 	}
@@ -388,6 +396,7 @@ func llamaArgs(c Config) []string {
 	}
 	return args
 }
+
 // ProcessLiveness answers "is this PID running at all", separately from
 // "is it ours". An Inspector that implements it lets the controller tell a
 // record that outlived its process from a stranger holding the port.

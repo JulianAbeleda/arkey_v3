@@ -30,6 +30,13 @@ func Discover(ctx context.Context, roots []string) (Discovery, error) {
 		if err != nil {
 			return out, err
 		}
+		root, err = filepath.EvalSymlinks(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return out, err
+		}
 		if seen[root] {
 			continue
 		}

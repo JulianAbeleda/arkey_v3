@@ -25,3 +25,30 @@ func TestDiscoverAndMetadata(t *testing.T) {
 		t.Fatal(string(b))
 	}
 }
+
+func TestDiscoverResolvesSymlinkedRoot(t *testing.T) {
+	parent := t.TempDir()
+	modelsDir := filepath.Join(parent, "storage", "models")
+	if err := os.MkdirAll(modelsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	modelPath := filepath.Join(modelsDir, "linked.gguf")
+	if err := os.WriteFile(modelPath, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "models")
+	if err := os.Symlink(modelsDir, link); err != nil {
+		t.Fatal(err)
+	}
+
+	discovery, err := Discover(context.Background(), []string{link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovery.Models) != 1 {
+		t.Fatalf("got %d models, want 1: %#v", len(discovery.Models), discovery.Models)
+	}
+	if discovery.Models[0].Path != modelPath {
+		t.Fatalf("model path = %q, want %q", discovery.Models[0].Path, modelPath)
+	}
+}
