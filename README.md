@@ -88,6 +88,17 @@ the server runs; it tells MoonBridge the upstream is a llama.cpp-style
 server, so it streams reasoning in the shape Codex reads. Without it Codex
 logs `ReasoningSummaryDelta without active item` and drops the thinking.
 
+### Thinking, per request
+
+A llama.cpp server has one thinking switch and it is binary: the template's
+thinking branch runs or it does not. It ignores `reasoning_effort`.
+MoonBridge translates, so every client above it speaks one vocabulary:
+`minimal`, `none` and `off` mean no thinking, any other level means
+thinking, and no effort at all leaves the server's own `--reasoning`
+default alone. Set it wherever the client already keeps it, e.g. Codex's
+`model_reasoning_effort`. Measured against Ubuntu on a question that needs
+real reasoning: about 10 s at `minimal`, about 43 s at `high`.
+
 The server must listen beyond loopback for another machine to reach it
 (`--host 0.0.0.0`, or a tailnet address). Arkey never starts a server
 that way itself.
