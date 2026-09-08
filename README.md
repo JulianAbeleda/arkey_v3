@@ -78,6 +78,11 @@ arkey --select-server=http://100.106.46.126:8080
 arkey --no-boot exec "Reply with the single word ready."
 ```
 
+`scripts/smoke-server-route.sh ORIGIN` proves the route on the installed
+Arkey: selects the server, launches Codex through MoonBridge with a marker
+prompt, and checks the reply, the launch warnings and MoonBridge's route
+line.
+
 The server must listen beyond loopback for another machine to reach it
 (`--host 0.0.0.0`, or a tailnet address). Arkey never starts a server
 that way itself.
