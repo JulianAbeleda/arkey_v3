@@ -19,7 +19,10 @@ const ProviderName = "moonbridge"
 // else in the Arkey-owned config.toml is kept. A machine that never ran an
 // earlier Arkey has no such file, and Codex without the provider table
 // refuses `model_provider="moonbridge"` before a request is made.
-func WriteConfig(stateHome, bridgeURL, bridgeToken string) error {
+// `model_catalog_json` names the catalog Arkey keeps the local and server
+// model metadata in; without it this Codex reads only its own cache and
+// warns that the model is unknown.
+func WriteConfig(stateHome, bridgeURL, bridgeToken, modelCatalog string) error {
 	if bridgeURL == "" {
 		return errors.New("MoonBridge URL is required")
 	}
@@ -61,11 +64,15 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken string) error {
 		"wire_api": "responses",
 		"env_key":  "ARKEY_MOONBRIDGE_TOKEN",
 	}
-	if current, _ := providers[ProviderName].(map[string]any); current != nil && current["base_url"] == want["base_url"] && current["wire_api"] == want["wire_api"] {
+	catalogSet := modelCatalog == "" || cfg["model_catalog_json"] == modelCatalog
+	if current, _ := providers[ProviderName].(map[string]any); current != nil && current["base_url"] == want["base_url"] && current["wire_api"] == want["wire_api"] && catalogSet {
 		return nil
 	}
 	providers[ProviderName] = want
 	cfg["model_providers"] = providers
+	if modelCatalog != "" {
+		cfg["model_catalog_json"] = modelCatalog
+	}
 	encoded, err := toml.Marshal(cfg)
 	if err != nil {
 		return err

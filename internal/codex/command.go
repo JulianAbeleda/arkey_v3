@@ -53,7 +53,26 @@ func Build(opts BuildOptions) (Plan, error) {
 	env := append([]string(nil), opts.Environment...)
 	env = client.SetEnv(env, "CODEX_HOME", opts.CodexHome)
 	env = client.SetEnv(env, "CODEX_THREAD_ID", "")
+	// The MoonBridge provider table names ARKEY_MOONBRIDGE_TOKEN as its
+	// env_key, and Codex refuses to start when a named key is absent. Kimi
+	// and Crush get the same default in their config; Codex gets it here.
+	if !hasEnv(env, "ARKEY_MOONBRIDGE_TOKEN") {
+		env = client.SetEnv(env, "ARKEY_MOONBRIDGE_TOKEN", DefaultBridgeToken)
+	}
 	return Plan{Binary: opts.Binary, Args: args, Env: env}, nil
+}
+
+// DefaultBridgeToken is what every Arkey client presents to MoonBridge
+// when nobody set one.
+const DefaultBridgeToken = "arkey-moonbridge"
+
+func hasEnv(env []string, key string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, key+"=") && len(entry) > len(key)+1 {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultBinary(home string) string {

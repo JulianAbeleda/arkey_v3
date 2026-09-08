@@ -30,6 +30,21 @@ func ServerMetadata(contextWindow int) map[string]any {
 func LocalMetadata() map[string]any {
 	return map[string]any{"slug": LocalSlug, "display_name": "Arkey Local (llama.cpp)", "default_reasoning_level": "medium", "supported_reasoning_levels": []any{map[string]any{"effort": "low", "description": "Low reasoning effort"}, map[string]any{"effort": "medium", "description": "Medium reasoning effort"}, map[string]any{"effort": "high", "description": "High reasoning effort"}}, "shell_type": "unified_exec", "visibility": "list", "supported_in_api": true, "priority": 0, "additional_speed_tiers": []any{}, "availability_nux": nil, "upgrade": nil, "base_instructions": "You are a coding assistant running locally through llama.cpp. Work carefully with the provided tools.", "supports_reasoning_summaries": true, "default_reasoning_summary": "auto", "support_verbosity": false, "default_verbosity": nil, "apply_patch_tool_type": "freeform", "web_search_tool_type": "text", "truncation_policy": map[string]any{"mode": "tokens", "limit": 8000}, "supports_parallel_tool_calls": false, "supports_image_detail_original": false, "context_window": 32768, "max_context_window": 32768, "effective_context_window_percent": 90, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "supports_search_tool": false}
 }
+
+// EnsureCatalog creates an empty Codex model catalog at path when there is
+// none, in a private directory.
+func EnsureCatalog(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return atomic(path, []byte("{\n  \"models\": []\n}\n"), 0o600)
+}
+
 func UpdateCatalog(path string) error {
 	return UpdateCatalogWith(path, LocalSlug, LocalMetadata())
 }

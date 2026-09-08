@@ -102,3 +102,26 @@ func TestBuildPreservesExplicitOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildCarriesTheBridgeTokenUnlessSet(t *testing.T) {
+	plan, err := Build(BuildOptions{Parsed: cli.Options{ClientArgs: []string{"exec", "test"}}, Model: "arkey-server-llama", Binary: "/bin/true", CodexHome: "/tmp/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN="+DefaultBridgeToken) {
+		t.Fatalf("env = %v", plan.Env)
+	}
+	plan, _ = Build(BuildOptions{Parsed: cli.Options{ClientArgs: []string{"exec", "test"}}, Model: "m", Binary: "/bin/true", CodexHome: "/tmp/h", Environment: []string{"ARKEY_MOONBRIDGE_TOKEN=mine"}})
+	if !contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN=mine") || contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN="+DefaultBridgeToken) {
+		t.Fatalf("a set token must stand: %v", plan.Env)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

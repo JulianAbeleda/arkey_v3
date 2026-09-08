@@ -238,7 +238,12 @@ func (s *Services) SelectServer(ctx context.Context, origin string) (app.Status,
 	if err != nil {
 		return app.Status{}, fmt.Errorf("write the MoonBridge server route: %w", err)
 	}
-	if s.ModelCatalog != "" && regularFile(s.ModelCatalog) {
+	if s.ModelCatalog != "" {
+		// A machine that never ran Codex through Arkey has no catalog yet;
+		// without the entry Codex falls back to guessed metadata and says so.
+		if err := models.EnsureCatalog(s.ModelCatalog); err != nil {
+			return app.Status{}, fmt.Errorf("create the Codex model catalog: %w", err)
+		}
 		if err := models.UpdateCatalogWith(s.ModelCatalog, models.ServerSlug, models.ServerMetadata(info.ContextSize)); err != nil {
 			return app.Status{}, fmt.Errorf("register server Codex model metadata: %w", err)
 		}
