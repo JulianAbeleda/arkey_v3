@@ -54,6 +54,13 @@ func SetServerRoute(path, origin, upstreamModel string, contextWindow int) (bool
 	}
 	provider := map[string]any{
 		"protocol": "openai-chat",
+		// `local` is not about where the server runs; it tells MoonBridge the
+		// upstream is a llama.cpp-style server, so it streams reasoning in the
+		// shape Codex reads: a seeded summary array, the summary text done
+		// event, and an output_item.done that closes the reasoning item before
+		// the answer. Without it Codex logs "ReasoningSummaryDelta without
+		// active item" and drops the thinking it cannot attach.
+		"local":    true,
 		"base_url": origin,
 		"api_key":  "local",
 		"offers":   []any{map[string]any{"model": ServerModel, "upstream_name": upstreamModel}},

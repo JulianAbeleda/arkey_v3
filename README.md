@@ -83,6 +83,11 @@ Arkey: selects the server, launches Codex through MoonBridge with a marker
 prompt, and checks the reply, the launch warnings and MoonBridge's route
 line.
 
+The provider is written with `local: true`. That flag is not about where
+the server runs; it tells MoonBridge the upstream is a llama.cpp-style
+server, so it streams reasoning in the shape Codex reads. Without it Codex
+logs `ReasoningSummaryDelta without active item` and drops the thinking.
+
 The server must listen beyond loopback for another machine to reach it
 (`--host 0.0.0.0`, or a tailnet address). Arkey never starts a server
 that way itself.

@@ -24,7 +24,7 @@ output="$(env -u ARKEY_MOONBRIDGE_TOKEN perl -e 'alarm 180; exec @ARGV' "$arkey"
 if ! grep -q "$marker" <<<"$output" || ! grep -q '^ready-' <<<"$(grep -o "$marker" <<<"$output" | tail -1)"; then
   say "FAIL: the reply did not carry the marker"; say "$output" | tail -20; fail=1
 fi
-for bad in "Missing environment variable" "Model metadata for" "Arkey route:" "Arkey client:"; do
+for bad in "Missing environment variable" "Model metadata for" "Arkey route:" "Arkey client:" "ReasoningSummary"; do
   if grep -q "$bad" <<<"$output"; then say "FAIL: launch said: $bad"; fail=1; fi
 done
 if ! tail -50 "$log" | grep -q 'model=arkey-server-llama'; then

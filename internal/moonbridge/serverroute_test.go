@@ -48,6 +48,11 @@ func TestSetServerRouteAddsTheRouteAndKeepsTheRest(t *testing.T) {
 	if server["base_url"] != "http://100.106.46.126:8080" || server["protocol"] != "openai-chat" {
 		t.Fatalf("server provider = %#v", server)
 	}
+	// Without `local` MoonBridge streams reasoning in a shape Codex cannot
+	// attach, and the thinking is dropped.
+	if server["local"] != true {
+		t.Fatalf("the provider must be marked local: %#v", server)
+	}
 	offer := server["offers"].([]any)[0].(map[string]any)
 	if offer["upstream_name"] != "arkey-local" || offer["model"] != ServerModel {
 		t.Fatalf("offer = %#v", offer)
