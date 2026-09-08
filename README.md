@@ -95,8 +95,19 @@ thinking branch runs or it does not. It ignores `reasoning_effort`.
 MoonBridge translates, so every client above it speaks one vocabulary:
 `minimal`, `none` and `off` mean no thinking, any other level means
 thinking, and no effort at all leaves the server's own `--reasoning`
-default alone. Set it wherever the client already keeps it, e.g. Codex's
-`model_reasoning_effort`. Measured against Ubuntu on a question that needs
+default alone. In Arkey Codex it is a two-position switch in `/model`, named for what it
+does rather than for a level that would mean nothing on a llama.cpp server:
+
+```
+Select Reasoning Level for arkey-server-llama
+  1. Off   The model answers straight away.
+› 2. On    The model works the problem through first, and takes longer.
+```
+
+Codex prints the effort string as the label and accepts names outside its
+own low/medium/high vocabulary, so the menu can say Off and On. Arkey
+writes both entries into the Codex model catalog; MoonBridge folds the case
+and reads `off` as no thinking. Measured against Ubuntu on a question that needs
 real reasoning: about 10 s at `minimal`, about 43 s at `high`.
 
 The server must listen beyond loopback for another machine to reach it

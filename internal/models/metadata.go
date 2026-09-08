@@ -24,6 +24,19 @@ func ServerMetadata(contextWindow int) map[string]any {
 	meta["base_instructions"] = "You are a coding assistant running through a llama.cpp server on the user's own network. Work carefully with the provided tools."
 	meta["context_window"] = contextWindow
 	meta["max_context_window"] = contextWindow
+	// A llama.cpp server has one thinking switch with two positions, so
+	// `/model` offers two, and they are named for what they do. Codex prints
+	// the effort string as the menu label and does not restrict it to its own
+	// low/medium/high vocabulary, so the label can say Off and On rather than
+	// a level that means nothing here (verified against codex-cli 0.153.4 by
+	// reading the rendered menu). MoonBridge folds the case and maps `off` to
+	// no thinking; every other name, `On` included, means thinking.
+	meta["supported_reasoning_levels"] = []any{
+		map[string]any{"effort": "Off", "description": "The model answers straight away."},
+		map[string]any{"effort": "On", "description": "The model works the problem through first, and takes longer."},
+	}
+	// On suits a coding agent; `/model` switches it off in three keystrokes.
+	meta["default_reasoning_level"] = "On"
 	return meta
 }
 
