@@ -21,6 +21,7 @@ const (
 	localScreen
 	modelsScreen
 	frontierScreen
+	serverScreen
 )
 
 // Model is the complete display state. Effects enter only through Services.
@@ -79,6 +80,14 @@ func (m Model) discover(parent context.Context, generation uint64, refresh bool)
 		defer cancel()
 		v, err := m.services.DiscoverModels(ctx)
 		return modelsDiscoveredMsg{generation: generation, models: v, refresh: refresh, err: err}
+	}
+}
+func (m Model) selectServer(parent context.Context, generation uint64, origin string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+		defer cancel()
+		s, err := m.services.SelectServer(ctx, origin)
+		return serverSelectedMsg{generation: generation, status: s, err: err}
 	}
 }
 func (m Model) selectFrontier(parent context.Context, generation uint64, name string) tea.Cmd {
@@ -190,6 +199,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = x.status
 			m.notice = "Frontier route selected."
+		}
+	case serverSelectedMsg:
+		if x.generation != m.generation {
+			break
+		}
+		m.finishOperation()
+		if x.err != nil {
+			m.errText = x.err.Error()
+		} else {
+			m.status = x.status
+			m.notice = "Server route is ready and selected."
 		}
 	case clientSelectedMsg:
 		if x.generation != m.generation {
@@ -405,14 +425,24 @@ func (m *Model) activate() tea.Cmd {
 		generation, ctx := m.begin()
 		return tea.Batch(m.spinner.Tick, m.selectClient(ctx, generation, []string{"codex", "claude", "kimi", "crush"}[c]))
 	case configScreen:
-		if c == 0 {
+		switch c {
+		case 0:
 			m.push(localScreen)
-		} else if c == 1 {
+		case 1:
+			m.push(serverScreen)
+		case 2:
 			m.push(frontierScreen)
-		} else {
+		default:
 			generation, ctx := m.begin()
 			return tea.Batch(m.spinner.Tick, m.scanGPU(ctx, generation))
 		}
+	case serverScreen:
+		if len(m.status.Servers) == 0 || c >= len(m.status.Servers) {
+			m.notice = "No servers are configured. Add [[servers]] entries (label, origin) to config.toml."
+			return nil
+		}
+		generation, ctx := m.begin()
+		return tea.Batch(m.spinner.Tick, m.selectServer(ctx, generation, m.status.Servers[c].Origin))
 	case localScreen:
 		if c == 0 {
 			m.notice = "tinygrad is in development and unavailable."
@@ -434,6 +464,9 @@ func (m Model) selectedModel() string {
 	if m.status.Route.Mode == "local" {
 		return "arkey-local-" + m.status.Route.LocalRuntime
 	}
+	if m.status.Route.Mode == "server" {
+		return "arkey-server-llama"
+	}
 	return m.status.Route.Model
 }
 func (m Model) items() []ui.Item {
@@ -454,9 +487,23 @@ func (m Model) items() []ui.Item {
 	case configScreen:
 		return []ui.Item{
 			{Key: "1", Label: "Local", Detail: "runtime → installed model", State: m.localRuntimeState()},
-			{Key: "2", Label: "Frontier", Detail: "hosted AI provider", State: m.status.Route.Backend},
-			{Key: "3", Label: "GPU Auto-scan", Detail: "detect and align llama.cpp", State: m.status.GPU},
+			{Key: "2", Label: "Server", Detail: "llama.cpp server on your network", State: m.serverState()},
+			{Key: "3", Label: "Frontier", Detail: "hosted AI provider", State: m.status.Route.Backend},
+			{Key: "4", Label: "GPU Auto-scan", Detail: "detect and align llama.cpp", State: m.status.GPU},
 		}
+	case serverScreen:
+		if len(m.status.Servers) == 0 {
+			return []ui.Item{{Key: "1", Label: "No servers configured", Detail: "add [[servers]] to config.toml", State: "empty", Disabled: true}}
+		}
+		out := make([]ui.Item, len(m.status.Servers))
+		for i, v := range m.status.Servers {
+			state := v.State
+			if v.Selected {
+				state = "selected · " + state
+			}
+			out[i] = ui.Item{Key: fmt.Sprint(i + 1), Label: v.Label, Detail: v.Origin, State: state}
+		}
+		return out
 	case localScreen:
 		return []ui.Item{
 			{Key: "1", Label: "tinygrad", Detail: "coming later · unavailable", State: "development", Disabled: true},
@@ -487,6 +534,15 @@ func (m Model) items() []ui.Item {
 	}
 	return nil
 }
+func (m Model) serverState() string {
+	if m.status.Route.Mode == "server" && m.status.Route.ServerLabel != "" {
+		return "selected · " + m.status.Route.ServerLabel
+	}
+	if m.status.Route.ServerLabel != "" {
+		return m.status.Route.ServerLabel
+	}
+	return "not selected"
+}
 func (m Model) localRuntimeState() string {
 	if m.status.LocalLoaded {
 		return "● loaded"
@@ -500,7 +556,7 @@ func (m Model) localRuntimeState() string {
 	return "not selected"
 }
 func (m Model) title() string {
-	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER"}[m.screen]
+	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER", "CONFIG · SERVER"}[m.screen]
 }
 func (m Model) subtitle() string {
 	switch m.screen {
@@ -510,6 +566,8 @@ func (m Model) subtitle() string {
 		return "Arkey-modified harnesses; upstream clients stay external and untouched."
 	case modelsScreen:
 		return "Select a GGUF to load. The active model is marked ● loaded."
+	case serverScreen:
+		return "Select the llama.cpp server the harness talks to through MoonBridge."
 	}
 	return "Configure AI routes and local hardware alignment."
 }

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JulianAbeleda/arkey_v3/internal/config"
@@ -221,5 +222,77 @@ func TestNewHonorsLegacyEnvironmentOverrides(t *testing.T) {
 	}
 	if services.CodexBinary != "/bin/true" || len(services.CandidateServers) != 1 {
 		t.Fatalf("runtime overrides not honored: binary=%q candidates=%#v", services.CodexBinary, services.CandidateServers)
+	}
+}
+
+func TestSelectServerProbesWritesTheRouteAndPersists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	paths := platform.DefaultPaths(home)
+	store := config.Store{Path: paths.ConfigFile(), Home: home}
+	cfg := config.Default(home)
+	cfg.MoonBridge.Config = filepath.Join(home, "moonbridge.yml")
+	cfg.Servers = []config.ServerEntry{{Label: "Ubuntu", Origin: ""}}
+	llama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-served"}]}`))
+		case "/props":
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":65536}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer llama.Close()
+	cfg.Servers[0].Origin = llama.URL
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	catalog := filepath.Join(home, "models_catalog.json")
+	if err := os.WriteFile(catalog, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"arkey-server-llama"}]}`))
+	}))
+	defer bridge.Close()
+	services := &Services{
+		Paths: paths, Store: store, CodexBinary: "/bin/true", Workspace: home,
+		BridgeClient: moonbridge.Client{BaseURL: bridge.URL}, ModelCatalog: catalog,
+		ServerHTTP: llama.Client(), config: cfg,
+	}
+	status, err := services.SelectServer(context.Background(), llama.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Route.Mode != "server" || status.Route.Model != "arkey-server-llama" || status.Route.ServerModel != "qwen-served" || status.Route.ServerLabel != "Ubuntu" {
+		t.Fatalf("route = %#v", status.Route)
+	}
+	if status.Runtime != "server reachable" || len(status.Servers) != 1 || !status.Servers[0].Selected {
+		t.Fatalf("status = %#v", status)
+	}
+	if got := services.ClientContextWindow(); got != 65536 {
+		t.Fatalf("client context window = %d", got)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.Mode != "server" || loaded.Server.ContextSize != 65536 {
+		t.Fatalf("persisted %#v, %v", loaded, err)
+	}
+	yml, _ := os.ReadFile(cfg.MoonBridge.Config)
+	if !strings.Contains(string(yml), llama.URL) || !strings.Contains(string(yml), "upstream_name: qwen-served") {
+		t.Fatalf("MoonBridge config:\n%s", yml)
+	}
+	registered, _ := os.ReadFile(catalog)
+	if !strings.Contains(string(registered), `"slug": "arkey-server-llama"`) || !strings.Contains(string(registered), `"context_window": 65536`) {
+		t.Fatalf("catalog:\n%s", registered)
+	}
+	if !services.serverChanged {
+		t.Fatal("a rewritten MoonBridge config must ask for a restart at launch")
+	}
+	if _, err := services.SelectServer(context.Background(), "http://127.0.0.1:1"); err == nil {
+		t.Fatal("an unreachable server must be refused")
 	}
 }

@@ -42,12 +42,55 @@ Config
     llama.cpp
       installed GGUF models
       Enter loads · r refreshes · d unloads the active model
+  Server
+    one row per [[servers]] entry in config.toml
+    Enter probes the server and makes it the route
   Frontier
     DeepSeek
     Codex
     Claude
   GPU Auto-scan
 Exit
+```
+
+## Server route
+
+A llama.cpp server somebody else runs, on this machine or another one, is a
+route beside Local and Frontier. List the candidates in
+`~/.config/arkey/config.toml`:
+
+```toml
+[[servers]]
+label = "Ubuntu · Tailscale"
+origin = "http://100.106.46.126:8080"
+```
+
+Config → Server → Enter probes the server (`/health`, `/v1/models`,
+`/props`), writes a `llama-server` provider and the `arkey-server-llama`
+route into the MoonBridge config with the server's own model name and
+context window, registers the Codex model metadata, and persists
+`mode = "server"`. Nothing is started for this route; the next launch
+restarts the Arkey-owned MoonBridge so it reads the route. The same
+selection without the screen, for a script or a first setup:
+
+```bash
+arkey --select-server=http://100.106.46.126:8080
+arkey --no-boot exec "Reply with the single word ready."
+```
+
+The server must listen beyond loopback for another machine to reach it
+(`--host 0.0.0.0`, or a tailnet address). Arkey never starts a server
+that way itself.
+
+Codex's isolated home (`~/.codex-moonbridge/config.toml`) gets its
+`model_providers.moonbridge` table from Arkey at launch when it is missing
+or the bridge address moved; nothing else in that file is touched.
+
+On macOS the official Codex from npm is a Node wrapper; snapshot the native
+binary it wraps:
+
+```bash
+ARKEY_CODEX_SOURCE_BIN=/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex scripts/snapshot-clients.sh
 ```
 
 ## Install

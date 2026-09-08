@@ -33,6 +33,23 @@ func (m *BridgeManager) EnsureLocalRoute(ctx context.Context) error {
 	return m.EnsureRoute(ctx, moonbridgeLocalRoute)
 }
 
+// Reload stops the MoonBridge this Arkey owns, so the next EnsureRoute starts
+// one that has read the config again. A MoonBridge nobody here owns is left
+// alone and EnsureRoute reports it.
+func (m *BridgeManager) Reload(ctx context.Context, route string) error {
+	m.mu.Lock()
+	previous, err := m.Store.Load(ctx)
+	if err == nil && previous.PID > 0 && m.owns(ctx, previous) {
+		if err = m.stop(ctx, previous); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		_ = m.Store.Clear(ctx)
+	}
+	m.mu.Unlock()
+	return m.EnsureRoute(ctx, route)
+}
+
 func (m *BridgeManager) EnsureRoute(ctx context.Context, route string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

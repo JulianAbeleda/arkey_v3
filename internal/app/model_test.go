@@ -225,3 +225,33 @@ func TestRefreshModelsInPlaceAndPreservesHighlightedModel(t *testing.T) {
 // This is intentionally conservative: rendered ANSI escapes are absent in the
 // plain fallback test environment, and the production renderer measures them.
 func visibleWidth(s string) int { return lipgloss.Width(s) }
+
+func TestConfigOffersServerAndTheServerScreenListsEntries(t *testing.T) {
+	m := New(nil)
+	m.status.Servers = []ServerSummary{{Label: "Ubuntu · Tailscale", Origin: "http://100.106.46.126:8080", State: "arkey-local · 256k context", Selected: true}}
+	m.status.Route = Route{Mode: "server", ServerLabel: "Ubuntu · Tailscale"}
+	m.cursors[mainScreen] = 1
+	m.activate()
+	items := m.items()
+	if len(items) != 4 || items[1].Label != "Server" || items[1].State != "selected · Ubuntu · Tailscale" {
+		t.Fatalf("config items = %#v", items)
+	}
+	m.cursors[configScreen] = 1
+	m.activate()
+	if got := m.ScreenName(); got != "CONFIG · SERVER" {
+		t.Fatalf("screen = %q", got)
+	}
+	rows := m.items()
+	if len(rows) != 1 || rows[0].Detail != "http://100.106.46.126:8080" || rows[0].State != "selected · arkey-local · 256k context" {
+		t.Fatalf("server rows = %#v", rows)
+	}
+	if got := m.selectedModel(); got != "arkey-server-llama" {
+		t.Fatalf("selected model = %q", got)
+	}
+	m.cursors[configScreen] = 2
+	m.back()
+	m.activate()
+	if got := m.ScreenName(); got != "CONFIG · FRONTIER" {
+		t.Fatalf("frontier moved: %q", got)
+	}
+}

@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+// macOS's TMPDIR is a symlink (/var -> /private/var) and every Arkey writer
+// refuses symlinked components; resolve it once so t.TempDir() is usable.
+func TestMain(m *testing.M) {
+	if resolved, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		_ = os.Setenv("TMPDIR", resolved)
+	}
+	os.Exit(m.Run())
+}
+
 func TestBuildIsolatesConfigAndData(t *testing.T) {
 	stateHome := t.TempDir()
 

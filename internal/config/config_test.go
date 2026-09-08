@@ -89,3 +89,41 @@ func TestLegacyMoonBridgeConfigPathIsPreserved(t *testing.T) {
 		t.Fatalf("MoonBridge config = %q, want %q", cfg.MoonBridge.Config, legacyConfig)
 	}
 }
+
+func TestServerModeNeedsAValidOrigin(t *testing.T) {
+	home := t.TempDir()
+	c := Default(home)
+	c.Mode = "server"
+	if err := c.Validate(); err == nil {
+		t.Fatal("server mode without an origin must be refused")
+	}
+	c.Server = Server{Label: "Ubuntu", Origin: "http://100.106.46.126:8080", Model: "arkey-local", ContextSize: 262144}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Servers = []ServerEntry{{Label: "Ubuntu", Origin: "http://100.106.46.126:8080/v1"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("an origin with a path must be refused")
+	}
+	c.Servers = []ServerEntry{{Label: "", Origin: "http://100.106.46.126:8080"}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("an entry without a label must be refused")
+	}
+	c.Servers = []ServerEntry{{Label: "Ubuntu", Origin: "http://100.106.46.126:8080"}}
+	encoded, err := Encode(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(encoded, home)
+	if err != nil || decoded.Mode != "server" || decoded.Server.Origin != c.Server.Origin || len(decoded.Servers) != 1 {
+		t.Fatalf("round trip: %#v %v", decoded, err)
+	}
+	for origin, ok := range map[string]bool{
+		"http://127.0.0.1:8080": true, "https://ubuntu.tailnet.ts.net": true,
+		"http://x:1/": false, "ftp://x:1": false, "127.0.0.1:8080": false, "http://user@x:1": false, "http://x:1?q": false,
+	} {
+		if ValidOrigin(origin) != ok {
+			t.Errorf("ValidOrigin(%q) = %v", origin, !ok)
+		}
+	}
+}

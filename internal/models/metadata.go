@@ -11,10 +11,32 @@ import (
 
 const LocalSlug = "arkey-local-llama"
 
+// ServerSlug is the Codex model slug of the server route.
+const ServerSlug = "arkey-server-llama"
+
+// ServerMetadata is LocalMetadata with the server's own context window and
+// its own words; the reasoning levels and tool shape are the same model
+// family behind the same kind of server.
+func ServerMetadata(contextWindow int) map[string]any {
+	meta := LocalMetadata()
+	meta["slug"] = ServerSlug
+	meta["display_name"] = "Arkey Server (llama.cpp)"
+	meta["base_instructions"] = "You are a coding assistant running through a llama.cpp server on the user's own network. Work carefully with the provided tools."
+	meta["context_window"] = contextWindow
+	meta["max_context_window"] = contextWindow
+	return meta
+}
+
 func LocalMetadata() map[string]any {
 	return map[string]any{"slug": LocalSlug, "display_name": "Arkey Local (llama.cpp)", "default_reasoning_level": "medium", "supported_reasoning_levels": []any{map[string]any{"effort": "low", "description": "Low reasoning effort"}, map[string]any{"effort": "medium", "description": "Medium reasoning effort"}, map[string]any{"effort": "high", "description": "High reasoning effort"}}, "shell_type": "unified_exec", "visibility": "list", "supported_in_api": true, "priority": 0, "additional_speed_tiers": []any{}, "availability_nux": nil, "upgrade": nil, "base_instructions": "You are a coding assistant running locally through llama.cpp. Work carefully with the provided tools.", "supports_reasoning_summaries": true, "default_reasoning_summary": "auto", "support_verbosity": false, "default_verbosity": nil, "apply_patch_tool_type": "freeform", "web_search_tool_type": "text", "truncation_policy": map[string]any{"mode": "tokens", "limit": 8000}, "supports_parallel_tool_calls": false, "supports_image_detail_original": false, "context_window": 32768, "max_context_window": 32768, "effective_context_window_percent": 90, "experimental_supported_tools": []any{}, "input_modalities": []string{"text"}, "supports_search_tool": false}
 }
 func UpdateCatalog(path string) error {
+	return UpdateCatalogWith(path, LocalSlug, LocalMetadata())
+}
+
+// UpdateCatalogWith replaces the entry with slug in the Codex model catalog
+// at path, or appends it.
+func UpdateCatalogWith(path, slug string, metadata map[string]any) error {
 	if e := platform.RejectSymlinkComponents(path); e != nil {
 		return e
 	}
@@ -42,13 +64,13 @@ func UpdateCatalog(path string) error {
 			return e
 		}
 	}
-	local, _ := json.Marshal(LocalMetadata())
+	local, _ := json.Marshal(metadata)
 	kept := entries[:0]
 	for _, x := range entries {
 		var id struct {
 			Slug string `json:"slug"`
 		}
-		if json.Unmarshal(x, &id) == nil && id.Slug == LocalSlug {
+		if json.Unmarshal(x, &id) == nil && id.Slug == slug {
 			continue
 		}
 		kept = append(kept, x)

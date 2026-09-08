@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -57,6 +58,19 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Arkey configuration:", err)
 		return 1
+	}
+	// --select-server=ORIGIN: the Config → Server screen's Enter, without the
+	// screen, for a script or a first setup over ssh.
+	if origin, ok := strings.CutPrefix(firstArg(parsed.ClientArgs), "--select-server="); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		status, selectErr := services.SelectServer(ctx, origin)
+		if selectErr != nil {
+			fmt.Fprintln(os.Stderr, "Arkey server:", selectErr)
+			return 1
+		}
+		fmt.Printf("Server route selected: %s (%s) · model %s · %s\n", status.Route.ServerLabel, status.Route.ServerOrigin, status.Route.ServerModel, status.Runtime)
+		return 0
 	}
 	model := services.SelectedModel()
 	selectedClient := services.SelectedClient()
@@ -140,6 +154,12 @@ func run(args []string) int {
 			return 1
 		}
 	}
+	if selectedClient == client.Codex {
+		if err = codex.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN")); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey Codex configuration:", err)
+			return 1
+		}
+	}
 	if selectedClient == client.Kimi {
 		if err = kimi.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model, services.ClientContextWindow()); err != nil {
 			fmt.Fprintln(os.Stderr, "Arkey Kimi configuration:", err)
@@ -171,4 +191,11 @@ func shouldBoot(parsed cli.Options) bool {
 func isTerminal(file *os.File) bool {
 	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlReadTermios)
 	return err == nil
+}
+
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }
