@@ -112,7 +112,7 @@ func (c Config) Validate() error {
 	if c.Local.Runtime != "llama" {
 		return errors.New("invalid local runtime")
 	}
-	if c.Hardware.Vendor != "unknown" && c.Hardware.Vendor != "nvidia" && c.Hardware.Vendor != "amd" {
+	if c.Hardware.Vendor != "unknown" && c.Hardware.Vendor != "nvidia" && c.Hardware.Vendor != "amd" && c.Hardware.Vendor != "metal" {
 		return errors.New("invalid hardware vendor")
 	}
 	if c.Local.Port < 1 || c.Local.Port > 65535 {

@@ -2,7 +2,12 @@
 
 package control
 
-import arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
+import (
+	"github.com/JulianAbeleda/arkey_v3/internal/gpu"
+	arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
+)
+
+func gpuInspector(r gpu.Runner) gpu.Inspector { return gpu.LDDInspector{Runner: r} }
 
 // The runtime backends on Linux read process identity from procfs and manage the
 // llama/MoonBridge processes through a transient systemd --user unit.

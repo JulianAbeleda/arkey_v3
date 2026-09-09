@@ -53,6 +53,12 @@ Config
 Exit
 ```
 
+On Apple Silicon, local models use llama.cpp's Metal backend. Selecting a model
+automatically configures the GPU and runtime when they have not been configured.
+Arkey checks `llama-server` on PATH before scanning source checkouts; a Homebrew
+installation is supported. It verifies that llama reports an Apple Metal device
+and that model layers were offloaded before saving the local selection.
+
 ## Server route
 
 A llama.cpp server somebody else runs, on this machine or another one, is a

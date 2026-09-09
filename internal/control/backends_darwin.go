@@ -2,7 +2,12 @@
 
 package control
 
-import arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
+import (
+	"github.com/JulianAbeleda/arkey_v3/internal/gpu"
+	arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
+)
+
+func gpuInspector(r gpu.Runner) gpu.Inspector { return gpu.DeviceInspector{Runner: r} }
 
 // The runtime backends on macOS read process identity through ps/lsof and always
 // run the llama/MoonBridge processes in direct mode: macOS has no systemd, so

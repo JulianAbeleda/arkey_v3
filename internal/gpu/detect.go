@@ -14,6 +14,7 @@ const (
 	Unknown Vendor = "unknown"
 	NVIDIA  Vendor = "nvidia"
 	AMD     Vendor = "amd"
+	Metal   Vendor = "metal"
 )
 
 type Runner interface {
@@ -114,5 +115,5 @@ func (d Detector) Detect(ctx context.Context) (Result, error) {
 			return Result{AMD, "AMD GPU", amdVRAMBytes(ctx, d.Runner, d.SysfsRoot)}, nil
 		}
 	}
-	return Result{Unknown, "No supported GPU", 0}, nil
+	return detectPlatform(ctx, d.Runner)
 }

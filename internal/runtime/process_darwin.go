@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JulianAbeleda/arkey_v3/internal/gpu"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 )
 
@@ -94,10 +95,7 @@ func (i DarwinInspector) PortOwner(ctx context.Context, port int) (int, error) {
 	return 0, nil
 }
 
-// OtoolBackend inspects GPU alignment on macOS. It mirrors the Linux backend but
-// reads shared-library linkage through otool(1) rather than ldd(1). In practice
-// the local-serving path requires an nvidia/amd vendor, so on Apple Silicon this
-// is reached only on the (rare) discrete-GPU configurations that pass GPU scan.
+// OtoolBackend checks Metal devices directly and legacy GPU library linkage.
 type OtoolBackend struct{ Runner CommandRunner }
 
 func (b OtoolBackend) runner() CommandRunner {
@@ -108,6 +106,10 @@ func (b OtoolBackend) runner() CommandRunner {
 }
 
 func (b OtoolBackend) Aligned(ctx context.Context, exe, vendor string) (bool, error) {
+	if vendor == "metal" {
+		backend, err := (gpu.DeviceInspector{Runner: b.runner()}).Backend(ctx, exe)
+		return backend == gpu.Backend(gpu.Metal), err
+	}
 	out, e := b.runner().Run(ctx, "otool", "-L", exe)
 	if e != nil {
 		return false, e
@@ -128,6 +130,9 @@ func (OtoolBackend) Accelerated(_ context.Context, log, vendor string) (bool, er
 		return false, e
 	}
 	s := string(b)
+	if vendor == "metal" {
+		return strings.Contains(s, "MTL0") && strings.Contains(s, "offloaded") && !strings.Contains(s, "offloaded 0/"), nil
+	}
 	if vendor == "nvidia" {
 		return strings.Contains(s, "CUDA"), nil
 	}

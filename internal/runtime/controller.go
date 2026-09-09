@@ -40,7 +40,7 @@ func (c Config) validate() error {
 	if c.Server == "" || c.LogPath == "" || c.Port < 1 || c.Port > 65535 || c.ContextSize < 1 {
 		return fmt.Errorf("runtime: invalid configuration")
 	}
-	if c.Vendor != "nvidia" && c.Vendor != "amd" {
+	if c.Vendor != "nvidia" && c.Vendor != "amd" && c.Vendor != "metal" {
 		return fmt.Errorf("runtime: unsupported GPU vendor %q", c.Vendor)
 	}
 	return nil
@@ -393,6 +393,10 @@ func llamaArgs(c Config) []string {
 	args := []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
 	if c.ChatTemplate != "" {
 		args = append(args, "--chat-template-file", c.ChatTemplate)
+	}
+	if c.Vendor == "metal" {
+		// Recent llama builds hide backend initialization at default verbosity.
+		args = append(args, "--verbosity", "4")
 	}
 	return args
 }

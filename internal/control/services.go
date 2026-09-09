@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -128,10 +129,14 @@ func New(home, workspace string) (*Services, error) {
 	var candidates []string
 	if value := os.Getenv("ARKEY_LLAMA_CANDIDATES"); value != "" {
 		candidates = filepath.SplitList(value)
+	} else if os.Getenv("ARKEY_LLAMA_SEARCH_ROOTS") == "" {
+		if path, err := exec.LookPath("llama-server"); err == nil {
+			candidates = []string{path}
+		}
 	}
 	return &Services{
 		Paths: paths, Store: store, Runner: runner,
-		Detector: gpu.Detector{Runner: runner}, GPUInspector: gpu.LDDInspector{Runner: runner},
+		Detector: gpu.Detector{Runner: runner}, GPUInspector: gpuInspector(runner),
 		BridgeClient: client, Bridge: bridge, Runtime: runtimeController,
 		MoonBridgeBinary: moonbridgeBinary, CodexBinary: codexBinary, ClaudeBinary: claudeBinary, KimiBinary: kimiBinary, CrushBinary: crushBinary, ModelCatalog: modelCatalog,
 		CandidateRoots: roots, CandidateServers: candidates,
@@ -330,6 +335,13 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 	}
 	cfg := s.snapshot()
 	cfg.Local.Model = canonical
+	if cfg.Local.LlamaServer == "" || cfg.Hardware.Vendor == "unknown" {
+		if _, err := s.ScanGPU(ctx); err != nil {
+			return app.Status{}, fmt.Errorf("configure local runtime: %w", err)
+		}
+		cfg = s.snapshot()
+		cfg.Local.Model = canonical
+	}
 	if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
 		if rollback != nil {
 			return app.Status{}, fmt.Errorf("load failed: %w; previous-model rollback failed: %v", err, rollback)
@@ -354,18 +366,21 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 	if override := os.Getenv("ARKEY_GPU_VENDOR_OVERRIDE"); override != "" {
 		detected.Vendor = gpu.Vendor(strings.ToLower(override))
 		detected.Name = envOr("ARKEY_GPU_NAME_OVERRIDE", string(detected.Vendor)+" GPU")
-		if detected.Vendor != gpu.NVIDIA && detected.Vendor != gpu.AMD {
+		if detected.Vendor != gpu.NVIDIA && detected.Vendor != gpu.AMD && detected.Vendor != gpu.Metal {
 			return app.Status{}, fmt.Errorf("invalid ARKEY_GPU_VENDOR_OVERRIDE %q", override)
 		}
 	}
-	if detected.Vendor != gpu.NVIDIA && detected.Vendor != gpu.AMD {
-		return app.Status{}, errors.New("no supported NVIDIA or AMD compute GPU was detected")
+	if detected.Vendor != gpu.NVIDIA && detected.Vendor != gpu.AMD && detected.Vendor != gpu.Metal {
+		return app.Status{}, errors.New("no supported NVIDIA, AMD, or Apple Metal GPU was detected")
 	}
 	candidates := append([]string(nil), s.CandidateServers...)
 	if len(candidates) == 0 {
 		candidates, err = gpu.CandidateServers(ctx, s.CandidateRoots)
 		if err != nil {
 			return app.Status{}, err
+		}
+		if path, lookupErr := exec.LookPath("llama-server"); lookupErr == nil {
+			candidates = append(candidates, path)
 		}
 	}
 	server := ""
