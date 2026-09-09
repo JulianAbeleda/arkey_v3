@@ -34,7 +34,7 @@ func TestBridgeExistingRouteDoesNotRestart(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := BridgeManager{Client: moonbridge.Client{BaseURL: server.URL}}
-	if err := manager.EnsureLocalRoute(context.Background()); err != nil {
+	if err := manager.EnsureRoute(context.Background(), moonbridgeLocalRoute); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -294,5 +294,37 @@ func TestSelectServerProbesWritesTheRouteAndPersists(t *testing.T) {
 	}
 	if _, err := services.SelectServer(context.Background(), "http://127.0.0.1:1"); err == nil {
 		t.Fatal("an unreachable server must be refused")
+	}
+}
+
+func TestLocalRuntimeDescriptorUsesCentralConfigWithoutChangingSelectedRoute(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default(home)
+	cfg.Mode = "server"
+	cfg.Local.Model = filepath.Join(home, "chosen.gguf")
+	cfg.Local.Port = 8099
+	cfg.Local.ContextSize = 16384
+	s := &Services{Paths: platform.DefaultPaths(home), config: cfg}
+	descriptor, err := s.LocalRuntime(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if descriptor.Schema != "arkey.local-runtime.v1" || descriptor.Origin != "http://127.0.0.1:8099" || descriptor.Model != "arkey-local" || descriptor.ContextSize != 16384 {
+		t.Fatalf("unexpected descriptor: %+v", descriptor)
+	}
+	runtime := runtimeConfig(cfg, s.Paths, 16384)
+	if descriptor.SlotsPath != runtime.SlotsPath || s.config.Mode != "server" {
+		t.Fatal("descriptor diverged from launch or changed the selected route")
+	}
+}
+
+func TestSharedSlotStorageIsScopedToModelAndContext(t *testing.T) {
+	paths := platform.DefaultPaths(t.TempDir())
+	a := localSlots(paths, "/models/a.gguf", 32768)
+	if a != localSlots(paths, "/models/a.gguf", 32768) {
+		t.Fatal("unstable storage")
+	}
+	if a == localSlots(paths, "/models/b.gguf", 32768) || a == localSlots(paths, "/models/a.gguf", 16384) {
+		t.Fatal("incompatible KV state would share a directory")
 	}
 }

@@ -31,6 +31,7 @@ type Config struct {
 	// the model's own. Set only where the embedded template is known broken; see
 	// llamaArgs.
 	ChatTemplate string
+	SlotsPath    string
 }
 
 func (c Config) validate() error {
@@ -60,6 +61,7 @@ type State struct {
 	LogPath         string `json:"log_path"`
 	ContextSize     int    `json:"context_size"`
 	Manager         string `json:"manager"`
+	SlotsPath       string `json:"slots_path,omitempty"`
 }
 type Store interface {
 	Load(context.Context) (State, error)
@@ -98,7 +100,9 @@ type LlamaInspector interface {
 type Health interface {
 	LlamaHealthy(context.Context, int) (bool, error)
 }
-type MoonBridge interface{ EnsureLocalRoute(context.Context) error }
+type MoonBridge interface {
+	EnsureLocalRoute(context.Context, int, int) error
+}
 type Backend interface {
 	Aligned(ctx context.Context, executable, vendor string) (bool, error)
 	Accelerated(ctx context.Context, logPath, vendor string) (bool, error)
@@ -161,7 +165,7 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 		}
 		return State{}, nil, ErrUnaligned
 	}
-	if e = c.MoonBridge.EnsureLocalRoute(ctx); e != nil {
+	if e = c.MoonBridge.EnsureLocalRoute(ctx, cfg.Port, cfg.ContextSize); e != nil {
 		return State{}, nil, e
 	}
 	previous, loadErr := c.Store.Load(ctx)
@@ -283,7 +287,7 @@ func (c *Controller) Stop(ctx context.Context) error {
 // window, so reusing one started with a different --ctx-size would silently
 // leave the client planning against a window the server does not have.
 func (c *Controller) matchesHealthy(ctx context.Context, s State, cfg Config) bool {
-	if s.Model != cfg.Model || s.Port != cfg.Port || s.ContextSize != cfg.ContextSize || !c.owns(ctx, s) {
+	if s.Model != cfg.Model || s.Port != cfg.Port || s.ContextSize != cfg.ContextSize || s.SlotsPath != cfg.SlotsPath || !c.owns(ctx, s) {
 		return false
 	}
 	ok, e := c.Health.LlamaHealthy(ctx, cfg.Port)
@@ -324,6 +328,11 @@ func (c *Controller) currentSystemdState(ctx context.Context, base State) (State
 	return State{}, false
 }
 func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
+	if cfg.SlotsPath != "" {
+		if err := platform.EnsurePrivateDir(cfg.SlotsPath); err != nil {
+			return State{}, err
+		}
+	}
 	if err := platform.EnsurePrivateDir(filepath.Dir(cfg.LogPath)); err != nil {
 		return State{}, err
 	}
@@ -352,7 +361,7 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 		c.cleanupStarted(manager, pid)
 		return State{}, e
 	}
-	return State{PID: pid, Executable: p.Executable, ArgsFingerprint: p.ArgsFingerprint, StartTime: p.StartTime, Model: cfg.Model, Port: cfg.Port, Server: cfg.Server, Vendor: cfg.Vendor, LogPath: cfg.LogPath, ContextSize: cfg.ContextSize, Manager: manager}, nil
+	return State{PID: pid, Executable: p.Executable, ArgsFingerprint: p.ArgsFingerprint, StartTime: p.StartTime, Model: cfg.Model, Port: cfg.Port, Server: cfg.Server, Vendor: cfg.Vendor, LogPath: cfg.LogPath, ContextSize: cfg.ContextSize, Manager: manager, SlotsPath: cfg.SlotsPath}, nil
 }
 
 func (c *Controller) cleanupStarted(manager string, pid int) {
@@ -391,6 +400,11 @@ const (
 
 func llamaArgs(c Config) []string {
 	args := []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
+	// One shared server, bounded RAM, and durable GameTerm prefix storage.
+	args = append(args, "--cache-ram", "0", "--metrics")
+	if c.SlotsPath != "" {
+		args = append(args, "--slot-save-path", c.SlotsPath)
+	}
 	if c.ChatTemplate != "" {
 		args = append(args, "--chat-template-file", c.ChatTemplate)
 	}
@@ -475,6 +489,7 @@ func (c *Controller) restore(ctx context.Context, old State, cfg Config) error {
 	if old.PID < 1 || old.Model == "" {
 		return nil
 	}
+	cfg.SlotsPath = old.SlotsPath
 	cfg.Model = old.Model
 	if old.Server != "" {
 		cfg.Server = old.Server

@@ -18,7 +18,7 @@ func TestWriteConfigAddsTheProviderAndKeepsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(filepath.Join(home, "config.toml"))
-	if !strings.Contains(string(first), `base_url = 'http://127.0.0.1:38440/v1'`) || !strings.Contains(string(first), `wire_api = 'responses'`) || !strings.Contains(string(first), `model_catalog_json = '/tmp/catalog.json'`) {
+	if !strings.Contains(string(first), `model_provider = 'moonbridge'`) || !strings.Contains(string(first), `base_url = 'http://127.0.0.1:38440/v1'`) || !strings.Contains(string(first), `wire_api = 'responses'`) || !strings.Contains(string(first), `model_catalog_json = '/tmp/catalog.json'`) {
 		t.Fatalf("config:\n%s", first)
 	}
 	extra := string(first) + "\n[projects.\"/x\"]\ntrust_level = 'trusted'\n"

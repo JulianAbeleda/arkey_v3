@@ -92,3 +92,27 @@ func TestSetServerRouteRefusesAnIncompleteRoute(t *testing.T) {
 		t.Fatal("no context window must be refused")
 	}
 }
+
+func TestLocalRouteFollowsCentralPortAndPreservesServerRoute(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "moonbridge.yml")
+	if _, err := SetServerRoute(path, "http://100.64.0.1:8080", "remote-model", 131072); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := SetLocalRoute(path, "http://127.0.0.1:8099", 32768)
+	if err != nil || !changed {
+		t.Fatalf("write: changed=%v err=%v", changed, err)
+	}
+	changed, err = SetLocalRoute(path, "http://127.0.0.1:8099", 32768)
+	if err != nil || changed {
+		t.Fatalf("identical config must not restart the bridge: changed=%v err=%v", changed, err)
+	}
+	data, _ := os.ReadFile(path)
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	providers := doc["providers"].(map[string]any)
+	if providers["llama-local"].(map[string]any)["base_url"] != "http://127.0.0.1:8099" || providers["llama-server"].(map[string]any)["base_url"] != "http://100.64.0.1:8080" {
+		t.Fatal("routes diverged")
+	}
+}

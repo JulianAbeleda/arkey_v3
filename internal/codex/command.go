@@ -49,6 +49,7 @@ func Build(opts BuildOptions) (Plan, error) {
 		args = append([]string{"-c", fmt.Sprintf("model_max_output_tokens=%d", opts.MaxOutputTokens)}, args...)
 	}
 	args = append([]string{"--sandbox", "workspace-write"}, args...)
+	args = configScope(args)
 
 	env := append([]string(nil), opts.Environment...)
 	env = client.SetEnv(env, "CODEX_HOME", opts.CodexHome)
@@ -106,6 +107,52 @@ func ensureExecSkip(args []string) []string {
 			out = append(out, args[i+1:]...)
 			return out
 		}
+	}
+	return args
+}
+
+// Codex exec has its own -c collection. Supplying even one exec-level override
+// can discard root-level overrides. Keep all configuration together at exec
+// scope, with generated defaults before explicit user values.
+func configScope(args []string) []string {
+	var configs, rest []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
+			configs = append(configs, "-c", args[i+1])
+			i++
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "--config="); ok {
+			configs = append(configs, "-c", value)
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	// The first positional is the command (or the interactive prompt). Skip
+	// values of the root options that can precede it; never inspect prompt text.
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--":
+			return args
+		case "-m", "--model", "-s", "--sandbox", "-p", "--profile", "-C", "--cd", "-i", "--image", "--enable", "--disable", "-a", "--ask-for-approval", "--add-dir", "--local-provider":
+			i++
+			continue
+		}
+		if strings.HasPrefix(rest[i], "-") {
+			continue
+		}
+		if rest[i] != "exec" {
+			return args
+		}
+		at := i + 1
+		out := append([]string(nil), rest[:at]...)
+		out = append(out, configs...)
+		return append(out, rest[at:]...)
 	}
 	return args
 }

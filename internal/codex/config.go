@@ -14,9 +14,9 @@ import (
 const ProviderName = "moonbridge"
 
 // WriteConfig makes sure the isolated Codex home names the MoonBridge
-// provider: the OpenAI Responses ingress at <bridge>/v1. Only that one table
-// is written, and only when it is missing or its address moved; everything
-// else in the Arkey-owned config.toml is kept. A machine that never ran an
+// provider: the OpenAI Responses ingress at <bridge>/v1. That table and the default provider
+// selection are repaired when needed; other settings in the Arkey-owned
+// config.toml are kept. A machine that never ran an
 // earlier Arkey has no such file, and Codex without the provider table
 // refuses `model_provider="moonbridge"` before a request is made.
 // `model_catalog_json` names the catalog Arkey keeps the local and server
@@ -65,11 +65,12 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, modelCatalog string) error {
 		"env_key":  "ARKEY_MOONBRIDGE_TOKEN",
 	}
 	catalogSet := modelCatalog == "" || cfg["model_catalog_json"] == modelCatalog
-	if current, _ := providers[ProviderName].(map[string]any); current != nil && current["base_url"] == want["base_url"] && current["wire_api"] == want["wire_api"] && catalogSet {
+	if current, _ := providers[ProviderName].(map[string]any); current != nil && current["base_url"] == want["base_url"] && current["wire_api"] == want["wire_api"] && catalogSet && cfg["model_provider"] == ProviderName {
 		return nil
 	}
 	providers[ProviderName] = want
 	cfg["model_providers"] = providers
+	cfg["model_provider"] = ProviderName
 	if modelCatalog != "" {
 		cfg["model_catalog_json"] = modelCatalog
 	}

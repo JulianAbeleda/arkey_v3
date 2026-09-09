@@ -29,7 +29,14 @@ type BridgeManager struct {
 	mu        sync.Mutex
 }
 
-func (m *BridgeManager) EnsureLocalRoute(ctx context.Context) error {
+func (m *BridgeManager) EnsureLocalRoute(ctx context.Context, port, contextSize int) error {
+	changed, err := moonbridge.SetLocalRoute(m.Config, fmt.Sprintf("http://127.0.0.1:%d", port), contextSize)
+	if err != nil {
+		return err
+	}
+	if changed {
+		return m.Reload(ctx, moonbridgeLocalRoute)
+	}
 	return m.EnsureRoute(ctx, moonbridgeLocalRoute)
 }
 

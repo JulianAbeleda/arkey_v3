@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,7 +98,7 @@ func (f *fakeHealth) LlamaHealthy(context.Context, int) (bool, error) {
 
 type fakeMoon struct{ err error }
 
-func (f fakeMoon) EnsureLocalRoute(context.Context) error { return f.err }
+func (f fakeMoon) EnsureLocalRoute(context.Context, int, int) error { return f.err }
 
 type fakeBackend struct{ aligned, accelerated bool }
 
@@ -395,5 +396,35 @@ func TestSystemdRecoveryBeatsTheStalePath(t *testing.T) {
 	}
 	if !service.stopped {
 		t.Fatal("pid 7 is gone but the unit is alive under 8: it must be stopped, not written off as stale")
+	}
+}
+
+// Two clients ask the one controller for the same service. The second request
+// must neither restart the engine nor stop the process used by the first.
+func TestRepeatedSharedEnsureReusesProcess(t *testing.T) {
+	c, _, in, launcher := setup()
+	config := cfg()
+	config.SlotsPath = filepath.Join(testLogDir, "shared-slots")
+	first, _, err := c.Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.port = first.PID
+	c.Health = &fakeHealth{answers: []bool{true}}
+	second, _, err := c.Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PID != second.PID || len(launcher.started) != 1 || len(launcher.stopped) != 0 {
+		t.Fatalf("shared service was replaced: first=%+v second=%+v starts=%v stops=%v", first, second, launcher.started, launcher.stopped)
+	}
+	if second.SlotsPath != config.SlotsPath {
+		t.Fatal("slot location diverged")
+	}
+	line := strings.Join(launcher.started[0], " ")
+	for _, flag := range []string{"--slot-save-path " + config.SlotsPath, "--cache-ram 0", "--parallel 1", "--metrics"} {
+		if !strings.Contains(line, flag) {
+			t.Fatalf("missing %s in %s", flag, line)
+		}
 	}
 }

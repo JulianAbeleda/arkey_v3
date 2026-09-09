@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,6 +59,20 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Arkey configuration:", err)
 		return 1
+	}
+	if len(parsed.ClientArgs) == 1 && (parsed.ClientArgs[0] == "--local-runtime" || parsed.ClientArgs[0] == "--ensure-local-runtime") {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		descriptor, err := services.LocalRuntime(ctx, parsed.ClientArgs[0] == "--ensure-local-runtime")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey local runtime:", err)
+			return 1
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(descriptor); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
 	}
 	// --select-server=ORIGIN: the Config → Server screen's Enter, without the
 	// screen, for a script or a first setup over ssh.

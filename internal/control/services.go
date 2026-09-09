@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -421,19 +422,39 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 	return s.Refresh(ctx)
 }
 
+// LocalRuntime is the versioned, credential-free contract consumed by native clients.
+// The existing runtime controller remains the only process owner.
+type LocalRuntime struct {
+	Schema      string `json:"schema"`
+	Origin      string `json:"origin"`
+	Model       string `json:"model"`
+	ContextSize int    `json:"context_size"`
+	SlotsPath   string `json:"slots_path"`
+}
+
+func (s *Services) LocalRuntime(ctx context.Context, ensure bool) (LocalRuntime, error) {
+	cfg := s.snapshot()
+	if cfg.Local.Model == "" {
+		return LocalRuntime{}, errors.New("no local GGUF is selected; select one in Arkey")
+	}
+	runtime := runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))
+	descriptor := LocalRuntime{Schema: "arkey.local-runtime.v1", Origin: fmt.Sprintf("http://127.0.0.1:%d", runtime.Port), Model: "arkey-local", ContextSize: runtime.ContextSize, SlotsPath: runtime.SlotsPath}
+	if ensure {
+		if _, rollback, err := s.Runtime.Start(ctx, runtime); err != nil {
+			if rollback != nil {
+				return LocalRuntime{}, fmt.Errorf("local startup failed: %w; rollback failed: %v", err, rollback)
+			}
+			return LocalRuntime{}, err
+		}
+	}
+	return descriptor, nil
+}
+
 func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 	cfg := s.snapshot()
 	if model == moonbridgeLocalRoute || cfg.Mode == "local" && model == selectedModel(cfg) {
-		if cfg.Local.Model == "" {
-			return errors.New("no local GGUF is selected")
-		}
-		if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
-			if rollback != nil {
-				return fmt.Errorf("local startup failed: %w; rollback failed: %v", err, rollback)
-			}
-			return err
-		}
-		return nil
+		_, err := s.LocalRuntime(ctx, true)
+		return err
 	}
 	if model == moonbridgeServerRoute {
 		if cfg.Server.Origin == "" {
@@ -594,8 +615,19 @@ func frontierModel(backend string) string {
 	}
 }
 
+// Prefix files contain model-specific KV tensors. A different model or
+// replacement of its file must never restore another model's cached tensors.
+func localSlots(paths platform.Paths, model string, contextSize int) string {
+	identity := fmt.Sprintf("%s\x00%d", model, contextSize)
+	if info, err := os.Stat(model); err == nil {
+		identity += fmt.Sprintf("\x00%d\x00%d", info.Size(), info.ModTime().UnixNano())
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return filepath.Join(paths.LocalStateDir(), "slots", fmt.Sprintf("%x", digest[:12]))
+}
+
 func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize int) arkeyruntime.Config {
-	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths)}
+	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), SlotsPath: localSlots(paths, cfg.Local.Model, contextSize), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths)}
 }
 
 // qwen35 ships a chat template whose assistant branch renders prior tool-call

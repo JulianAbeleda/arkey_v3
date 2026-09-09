@@ -27,6 +27,15 @@ const configLimit = 1 << 20
 // providers and their keys included, is kept as it is. Reports whether the
 // file changed, so the caller knows MoonBridge must be restarted to see it.
 func SetServerRoute(path, origin, upstreamModel string, contextWindow int) (bool, error) {
+	return setLlamaRoute(path, origin, upstreamModel, contextWindow, ServerRoute, ServerModel, ServerProvider, "Arkey Server")
+}
+
+// SetLocalRoute projects the central local runtime config into MoonBridge.
+func SetLocalRoute(path, origin string, contextWindow int) (bool, error) {
+	return setLlamaRoute(path, origin, "arkey-local", contextWindow, "arkey-local-llama", "arkey-local", "llama-local", "Arkey Local")
+}
+
+func setLlamaRoute(path, origin, upstreamModel string, contextWindow int, routeID, modelID, providerID, displayName string) (bool, error) {
 	if origin == "" || upstreamModel == "" || contextWindow <= 0 {
 		return false, errors.New("server route needs an origin, an upstream model and a context window")
 	}
@@ -63,22 +72,22 @@ func SetServerRoute(path, origin, upstreamModel string, contextWindow int) (bool
 		"local":    true,
 		"base_url": origin,
 		"api_key":  "local",
-		"offers":   []any{map[string]any{"model": ServerModel, "upstream_name": upstreamModel}},
+		"offers":   []any{map[string]any{"model": modelID, "upstream_name": upstreamModel}},
 	}
 	model := map[string]any{
-		"display_name":      "Arkey Server",
+		"display_name":      displayName,
 		"context_window":    contextWindow,
 		"max_output_tokens": maxOutput,
 	}
-	route := map[string]any{"model": ServerModel, "provider": ServerProvider}
+	route := map[string]any{"model": modelID, "provider": providerID}
 	changed := false
 	for _, entry := range []struct {
 		section, key string
 		value        map[string]any
 	}{
-		{"providers", ServerProvider, provider},
-		{"models", ServerModel, model},
-		{"routes", ServerRoute, route},
+		{"providers", providerID, provider},
+		{"models", modelID, model},
+		{"routes", routeID, route},
 	} {
 		table, _ := doc[entry.section].(map[string]any)
 		if table == nil {

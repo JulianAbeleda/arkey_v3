@@ -59,6 +59,28 @@ Arkey checks `llama-server` on PATH before scanning source checkouts; a Homebrew
 installation is supported. It verifies that llama reports an Apple Metal device
 and that model layers were offloaded before saving the local selection.
 
+## Shared local inference
+
+Arkey owns the local llama-server used by both GameTerm and the coding
+clients. `~/.config/arkey/config.toml` is the authority for its selected
+model, binary, port and context; MoonBridge's local route is projected from
+that configuration when the service is ensured.
+
+Native clients use `arkey --local-runtime` for a credential-free JSON
+descriptor, or `arkey --ensure-local-runtime` to start/reuse the service and
+return the descriptor. The `arkey.local-runtime.v1` object contains `origin`,
+`model`, `context_size` and `slots_path`. These commands do not launch a TUI
+or change the selected client/route. Repeated ensures use the existing
+cross-process lock and verified process identity; they do not replace an
+unmanaged listener. GameTerm no longer owns or stops llama-server.
+
+The server uses one slot, quantized KV, no separate RAM prompt cache, and
+Arkey-managed disk slot storage scoped to the selected model and context.
+The isolated Codex home defaults to MoonBridge; exec-level configuration
+flags are kept together so an effort override cannot discard its route.
+Clients share model memory and serialize
+requests; a client switch may require a cold prompt evaluation.
+
 ## Server route
 
 A llama.cpp server somebody else runs, on this machine or another one, is a
