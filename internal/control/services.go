@@ -677,7 +677,7 @@ func (s *Services) localContextSize(ctx context.Context, cfg config.Config) int 
 	if err != nil {
 		return fallbackContextSize
 	}
-	if n := models.DeriveContextSizeForModel(cfg.Local.Model, detected.TotalVRAMBytes, arkeyruntime.KVCacheBytesPerElement); n > 0 {
+	if n := models.DeriveContextSizeForModel(cfg.Local.Model, detected.TotalVRAMBytes, arkeyruntime.KVCacheBytesPerElement, detected.Unified); n > 0 {
 		return n
 	}
 	return fallbackContextSize

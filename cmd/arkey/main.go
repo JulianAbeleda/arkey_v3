@@ -60,6 +60,21 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "Arkey configuration:", err)
 		return 1
 	}
+	// --stop-local-runtime: release the model without forgetting the
+	// selection, the way the Config screen's unload does. It exists because
+	// the only other way to free that memory was for a client to kill the
+	// port, which is a client reaching across a boundary to end a process it
+	// does not own and cannot know who else is using.
+	if len(parsed.ClientArgs) == 1 && parsed.ClientArgs[0] == "--stop-local-runtime" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, err := services.UnloadLocal(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey local runtime:", err)
+			return 1
+		}
+		fmt.Println("local runtime stopped")
+		return 0
+	}
 	if len(parsed.ClientArgs) == 1 && (parsed.ClientArgs[0] == "--local-runtime" || parsed.ClientArgs[0] == "--ensure-local-runtime") {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()

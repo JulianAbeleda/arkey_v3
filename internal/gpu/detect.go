@@ -29,6 +29,11 @@ type Result struct {
 	Vendor         Vendor
 	Name           string
 	TotalVRAMBytes int64
+	// Unified is true when TotalVRAMBytes is the machine's whole memory,
+	// shared with the operating system and every other application, rather
+	// than a dedicated pool. Apple Silicon is the case that matters: a
+	// budget that would be safe on a discrete card starves the desktop here.
+	Unified bool
 }
 
 // parseIntLoose strips whitespace and common unit suffixes before parsing an int64.
@@ -98,7 +103,7 @@ func (d Detector) Detect(ctx context.Context) (Result, error) {
 		if b, e := d.Runner.Run(ctx, "nvidia-smi", "--query-gpu=name", "--format=csv,noheader"); e == nil {
 			name := strings.TrimSpace(strings.Split(string(b), "\n")[0])
 			if name != "" {
-				return Result{NVIDIA, name, nvidiaVRAMBytes(ctx, d.Runner)}, nil
+				return Result{NVIDIA, name, nvidiaVRAMBytes(ctx, d.Runner), false}, nil
 			}
 		}
 	}
@@ -106,13 +111,13 @@ func (d Detector) Detect(ctx context.Context) (Result, error) {
 		if b, e := d.Runner.Run(ctx, "rocminfo"); e == nil {
 			for _, line := range strings.Split(string(b), "\n") {
 				if x := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "Marketing Name:")); x != "" && strings.Contains(line, "Marketing Name:") {
-					return Result{AMD, x, amdVRAMBytes(ctx, d.Runner, d.SysfsRoot)}, nil
+					return Result{AMD, x, amdVRAMBytes(ctx, d.Runner, d.SysfsRoot), false}, nil
 				}
 			}
-			return Result{AMD, "AMD GPU", amdVRAMBytes(ctx, d.Runner, d.SysfsRoot)}, nil
+			return Result{AMD, "AMD GPU", amdVRAMBytes(ctx, d.Runner, d.SysfsRoot), false}, nil
 		}
 		if _, e := d.Runner.Run(ctx, "rocm-smi"); e == nil {
-			return Result{AMD, "AMD GPU", amdVRAMBytes(ctx, d.Runner, d.SysfsRoot)}, nil
+			return Result{AMD, "AMD GPU", amdVRAMBytes(ctx, d.Runner, d.SysfsRoot), false}, nil
 		}
 	}
 	return detectPlatform(ctx, d.Runner)

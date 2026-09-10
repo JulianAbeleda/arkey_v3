@@ -186,7 +186,13 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 	if owner, e := c.Inspector.PortOwner(ctx, cfg.Port); e != nil {
 		return State{}, nil, e
 	} else if owner > 0 && !c.owns(ctx, previous) {
-		return State{}, nil, ErrUnmanagedPort
+		// One local inference server at a time, and this refuses rather than
+		// evicting: a server Arkey did not start belongs to somebody, and
+		// ending it is a decision for the person who did. What was missing
+		// was not the eviction but the sentence — "owned by an unmanaged
+		// process" named nothing, so the only way forward was to go hunting
+		// for a pid by hand.
+		return State{}, nil, c.unmanagedPortError(ctx, owner, cfg)
 	}
 	if previous.PID > 0 {
 		if e = c.stopOwned(ctx, previous); e != nil {
@@ -362,6 +368,22 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 		return State{}, e
 	}
 	return State{PID: pid, Executable: p.Executable, ArgsFingerprint: p.ArgsFingerprint, StartTime: p.StartTime, Model: cfg.Model, Port: cfg.Port, Server: cfg.Server, Vendor: cfg.Vendor, LogPath: cfg.LogPath, ContextSize: cfg.ContextSize, Manager: manager, SlotsPath: cfg.SlotsPath}, nil
+}
+
+// unmanagedPortError says who has the port and how to get it back.
+func (c *Controller) unmanagedPortError(ctx context.Context, pid int, cfg Config) error {
+	process, err := c.Inspector.Process(ctx, pid)
+	if err != nil {
+		return fmt.Errorf("%w: pid %d holds port %d", ErrUnmanagedPort, pid, cfg.Port)
+	}
+	name := filepath.Base(process.Executable)
+	if name == "llama-server" {
+		return fmt.Errorf(
+			"%w: another llama-server (pid %d) already holds port %d. Only one local model runs at a time on this machine; stop that one, or run `arkey --stop-local-runtime` if Arkey started it",
+			ErrUnmanagedPort, pid, cfg.Port)
+	}
+	return fmt.Errorf("%w: %s (pid %d) holds port %d; free that port or change the configured one",
+		ErrUnmanagedPort, name, pid, cfg.Port)
 }
 
 func (c *Controller) cleanupStarted(manager string, pid int) {
