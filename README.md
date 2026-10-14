@@ -220,6 +220,10 @@ Responses ingress. Crush speaks OpenAI Chat Completions and uses MoonBridge's
 the Arkey state home with `CRUSH_GLOBAL_CONFIG` and `CRUSH_GLOBAL_DATA`, so the
 official `~/.config/crush` installation is untouched.
 
+For npm-installed Crush, the snapshot script resolves `run-crush.js` to the
+package's native `bin/crush`; the private copy does not depend on the npm
+launcher's relative imports. Select it through **TUI → Arkey Crush**.
+
 Crush cannot use the Codex frontier: MoonBridge converts the Chat Completions
 ingress into Anthropic, Google GenAI and OpenAI Chat upstreams, but an OpenAI
 Responses upstream is only reachable by verbatim passthrough from the Responses

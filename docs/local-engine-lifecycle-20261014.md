@@ -176,3 +176,18 @@ context-metadata change then restarted MoonBridge successfully and Kimi passed.
 `go test -race ./...` and `go vet ./...` passed; Darwin/arm64 compile checks
 passed (not a macOS runtime test). Local artifacts are under
 `/home/ubuntu/storage/arkey-fp8-cache-20261014/`.
+
+## Crush client smoke
+
+Charm Crush v0.89.0 was already installed through npm, but Arkey had no private
+snapshot. The snapshot script now copies the package's native executable when
+the source is `run-crush.js`. Other client snapshots were preserved. The actual
+boot menu showed **TUI → Arkey Crush** ready; Codex remains the saved default.
+
+With the same running vLLM NVFP4 model and FP8 cache, Crush returned
+`ARKEY_CRUSH_OK` and completed a file-reading tool round trip returning
+`maple-4827`. Its generated config derived 244,608 context and 32,768 default
+maximum output tokens. No engine or model-specific routing changes were needed.
+App, Crush and control package tests passed, as did the snapshot script's shell
+syntax check and the real npm-to-native snapshot/version check. Private smoke
+logs are under `/home/ubuntu/storage/arkey-crush-20261014/`.

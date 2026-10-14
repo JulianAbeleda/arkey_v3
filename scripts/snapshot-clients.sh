@@ -44,6 +44,11 @@ snapshot_client() (
     return 0
   fi
   resolved="$(readlink -f -- "$source")"
+  # Crush's npm command is a JS launcher with relative package imports. Copy
+  # the packaged native executable so the snapshot remains self-contained.
+  if [[ "$name" == "crush" && "${resolved##*/}" == "run-crush.js" ]]; then
+    resolved="$(readlink -f -- "${resolved%/*}/bin/crush")"
+  fi
   if [[ -z "$resolved" || ! -f "$resolved" || ! -x "$resolved" ]]; then
     echo "Official $name client is not a regular executable: $source" >&2
     return 1
