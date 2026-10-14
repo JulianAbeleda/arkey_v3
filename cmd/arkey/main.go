@@ -117,6 +117,7 @@ func run(args []string) int {
 			Parsed: parsed, Model: model, Binary: services.ClientBinary(selectedClient),
 			CodexHome: stateHome, Environment: os.Environ(),
 			ContextWindow: services.ClientContextWindow(), MaxOutputTokens: services.ClientMaxOutputTokens(),
+			ReasoningEffort: services.ClientReasoningEffort(),
 		})
 	}
 	if err != nil {

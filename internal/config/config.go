@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,11 +30,15 @@ type Frontier struct {
 	Backend string `toml:"backend"`
 }
 type Local struct {
-	Runtime     string `toml:"runtime"`
-	Model       string `toml:"model"`
-	LlamaServer string `toml:"llama_server"`
-	Port        int    `toml:"port"`
-	ContextSize int    `toml:"context_size"`
+	VLLMReasoningEffort string `toml:"vllm_reasoning_effort"`
+	VLLMURL             string `toml:"vllm_url"`
+	VLLMModel           string `toml:"vllm_model"`
+	VLLMContextSize     int    `toml:"vllm_context_size"`
+	Runtime             string `toml:"runtime"`
+	Model               string `toml:"model"`
+	LlamaServer         string `toml:"llama_server"`
+	Port                int    `toml:"port"`
+	ContextSize         int    `toml:"context_size"`
 }
 type Hardware struct {
 	Vendor string `toml:"vendor"`
@@ -48,7 +54,7 @@ type UI struct {
 
 func Default(home string) Config {
 	d := filepath.Join(home, ".config", "arkey")
-	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
+	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 32768, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {
@@ -63,8 +69,24 @@ func (c Config) Validate() error {
 	if c.Frontier.Backend != "deepseek" && c.Frontier.Backend != "codex" && c.Frontier.Backend != "claude" {
 		return errors.New("invalid frontier backend")
 	}
-	if c.Local.Runtime != "llama" {
+	if c.Local.Runtime != "llama" && c.Local.Runtime != "vllm" {
 		return errors.New("invalid local runtime")
+	}
+	u, err := url.Parse(c.Local.VLLMURL)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return errors.New("vllm_url must be a local HTTP server root, without /v1")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("vllm_url must use a loopback host")
+	}
+	if c.Local.VLLMModel == "" || c.Local.VLLMContextSize < 4096 {
+		return errors.New("vLLM requires a served model name and context size of at least 4096")
+	}
+	switch c.Local.VLLMReasoningEffort {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh":
+	default:
+		return errors.New("invalid vllm_reasoning_effort")
 	}
 	if c.Hardware.Vendor != "unknown" && c.Hardware.Vendor != "nvidia" && c.Hardware.Vendor != "amd" {
 		return errors.New("invalid hardware vendor")

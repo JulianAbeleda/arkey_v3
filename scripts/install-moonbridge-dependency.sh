@@ -41,7 +41,11 @@ git -C "$source_dir" checkout --quiet --detach "$MOONBRIDGE_REVISION"
 build_dir="$(mktemp -d)"
 trap 'find "$build_dir" -type f -delete 2>/dev/null || true; find "$build_dir" -depth -type d -empty -delete 2>/dev/null || true' EXIT
 (
-  cd "$source_dir"
+  # Patch an exported build tree, keeping the verified dependency checkout clean.
+  git -C "$source_dir" archive HEAD | tar -x -C "$build_dir"
+  cd "$build_dir"
+  git apply "$repo_root/dependencies/moonbridge-local-output-budget.patch"
+  go test ./internal/service/server
   go build -trimpath -o "$build_dir/moonbridge" ./cmd/moonbridge
 )
 install -m 0755 "$build_dir/moonbridge" "$install_dir/moonbridge"

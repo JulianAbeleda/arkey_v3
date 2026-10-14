@@ -21,6 +21,7 @@ type BuildOptions struct {
 	Environment     []string
 	ContextWindow   int
 	MaxOutputTokens int
+	ReasoningEffort string
 }
 
 // Build assembles the codex launch plan. ContextWindow and MaxOutputTokens are
@@ -47,6 +48,9 @@ func Build(opts BuildOptions) (Plan, error) {
 	}
 	if opts.MaxOutputTokens > 0 && !hasClientArg(opts.Parsed.ClientArgs, "model_max_output_tokens") {
 		args = append([]string{"-c", fmt.Sprintf("model_max_output_tokens=%d", opts.MaxOutputTokens)}, args...)
+	}
+	if opts.ReasoningEffort != "" && !hasClientArg(opts.Parsed.ClientArgs, "model_reasoning_effort") {
+		args = append([]string{"-c", fmt.Sprintf("model_reasoning_effort=%q", opts.ReasoningEffort)}, args...)
 	}
 	args = append([]string{"--sandbox", "workspace-write"}, args...)
 

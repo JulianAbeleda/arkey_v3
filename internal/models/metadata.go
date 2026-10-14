@@ -43,17 +43,22 @@ func UpdateCatalog(path string) error {
 		}
 	}
 	local, _ := json.Marshal(LocalMetadata())
+	vllm := LocalMetadata()
+	vllm["slug"] = "arkey-local-vllm"
+	vllm["display_name"] = "Arkey Local (vLLM)"
+	vllm["base_instructions"] = "You are a coding assistant running locally through vLLM. Work carefully with the provided tools."
+	vllmEntry, _ := json.Marshal(vllm)
 	kept := entries[:0]
 	for _, x := range entries {
 		var id struct {
 			Slug string `json:"slug"`
 		}
-		if json.Unmarshal(x, &id) == nil && id.Slug == LocalSlug {
+		if json.Unmarshal(x, &id) == nil && (id.Slug == LocalSlug || id.Slug == "arkey-local-vllm") {
 			continue
 		}
 		kept = append(kept, x)
 	}
-	c["models"], _ = json.Marshal(append(kept, local))
+	c["models"], _ = json.Marshal(append(kept, local, vllmEntry))
 	encoded, e := json.MarshalIndent(c, "", "  ")
 	if e != nil {
 		return e

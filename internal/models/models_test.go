@@ -21,7 +21,7 @@ func TestDiscoverAndMetadata(t *testing.T) {
 		t.Fatal(e)
 	}
 	b, _ := os.ReadFile(p)
-	if !strings.Contains(string(b), `"other": 1`) || strings.Count(string(b), LocalSlug) != 1 {
+	if !strings.Contains(string(b), `"other": 1`) || strings.Count(string(b), LocalSlug) != 1 || strings.Count(string(b), "arkey-local-vllm") != 1 {
 		t.Fatal(string(b))
 	}
 }

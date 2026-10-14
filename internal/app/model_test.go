@@ -225,3 +225,28 @@ func TestRefreshModelsInPlaceAndPreservesHighlightedModel(t *testing.T) {
 // This is intentionally conservative: rendered ANSI escapes are absent in the
 // plain fallback test environment, and the production renderer measures them.
 func visibleWidth(s string) int { return lipgloss.Width(s) }
+
+type vllmMenuServices struct {
+	NopServices
+	runtime string
+}
+
+func (s *vllmMenuServices) ActivateLocal(_ context.Context, runtime string, _ ModelSummary) (Status, error) {
+	s.runtime = runtime
+	return Status{}, nil
+}
+func TestVLLMMenuActivatesVLLM(t *testing.T) {
+	s := &vllmMenuServices{}
+	m := New(s)
+	m.screen = localScreen
+	m.cursors[localScreen] = 2
+	if m.items()[2].Label != "vLLM" {
+		t.Fatal("missing vLLM entry")
+	}
+	// The command captures the runtime before asynchronous execution.
+	cmd := m.activateLocal(context.Background(), 0, ModelSummary{})
+	cmd()
+	if s.runtime != "vllm" {
+		t.Fatalf("activated %q", s.runtime)
+	}
+}

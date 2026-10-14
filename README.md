@@ -39,6 +39,7 @@ TUI
 Config
   Local
     tinygrad     (in development; unavailable)
+    vLLM        (connect to a separately managed local server)
     llama.cpp
       installed GGUF models
       Enter loads · r refreshes · d unloads the active model
@@ -108,3 +109,41 @@ defined in
 scripts/install.sh --check
 go test ./...
 ```
+
+## Local vLLM
+
+Config → Local → vLLM selects an already running loopback vLLM server. Arkey checks
+`/v1/models` for the configured served model and verifies the advertised context limit
+before saving the selection; launch checks it again. It does not start or stop vLLM.
+The llama.cpp selection is retained separately so you can switch back.
+
+Configure these fields under `[local]` in `~/.config/arkey/config.toml`:
+
+```toml
+vllm_url = "http://127.0.0.1:8000"
+vllm_model = "arkey-local-vllm"
+vllm_context_size = 32768
+vllm_reasoning_effort = "medium"
+```
+
+Use a server root without `/v1`, and a context limit no larger than the server's
+`--max-model-len`. Configure the `arkey-local-vllm` route, `vllm-local` provider,
+and `arkey-vllm` model from `dependencies/moonbridge.example.yml` in your MoonBridge
+configuration. Its URL, upstream name and context limit must match the Arkey settings.
+An already running bridge must load the updated configuration before selection succeeds.
+
+For Qwen3.8 AWQ, the smoke used vLLM's `--served-model-name arkey-local-vllm`,
+`--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3`,
+and `--default-chat-template-kwargs '{"enable_thinking":false}'`. Tool/reasoning parsers
+are model-specific; use the appropriate ones for other checkpoints. Keep model serving
+under your normal memory limits and prebuild guards. A working catalog is only a
+connection check; validate generation and tool calling for the chosen checkpoint.
+
+The Codex launch uses `vllm_reasoning_effort` for this route (an explicit client CLI
+override still wins). Qwen3.8 accepts low, medium and xhigh, but rejects high; adjust
+this setting for another model, or use an empty string to retain client defaults.
+The pinned MoonBridge build includes `dependencies/moonbridge-local-output-budget.patch`:
+for local routes, an omitted output limit uses the smaller of the global default and
+the route's declared output limit. Explicit request limits and hosted defaults are unchanged.
+
+[Smoke results and limitations](docs/vllm-smoke-20261014.md).

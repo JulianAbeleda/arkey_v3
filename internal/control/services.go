@@ -147,7 +147,16 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 		Route: app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model},
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
-	if cfg.Local.Model != "" {
+	if cfg.Local.Runtime == "vllm" {
+		status.Route.LocalModel = cfg.Local.VLLMModel
+		if err := s.checkVLLM(ctx, cfg); err == nil {
+			status.LocalLoaded = true
+			status.LoadedModel = cfg.Local.VLLMModel
+			status.Runtime = "vLLM connected"
+		} else {
+			status.Runtime = "vLLM unavailable"
+		}
+	} else if cfg.Local.Model != "" {
 		loadedModel, ready, err := s.Runtime.Loaded(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg)))
 		if err == nil && loadedModel != "" {
 			status.LocalActive = true
@@ -195,6 +204,9 @@ func (s *Services) ValidateClient(client string) error {
 // UnloadLocal releases the active model from memory without forgetting the
 // selection. The next Arkey Codex launch can load the same model again.
 func (s *Services) UnloadLocal(ctx context.Context) (app.Status, error) {
+	if s.snapshot().Local.Runtime == "vllm" {
+		return app.Status{}, errors.New("vLLM is externally managed; stop it using its server manager")
+	}
 	if err := s.Runtime.Stop(ctx); err != nil {
 		return app.Status{}, fmt.Errorf("unload local model: %w", err)
 	}
@@ -231,6 +243,9 @@ func (s *Services) SelectFrontier(ctx context.Context, backend string) (app.Stat
 }
 
 func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model app.ModelSummary) (app.Status, error) {
+	if runtimeName == "vllm" {
+		return s.activateVLLM(ctx)
+	}
 	if runtimeName != "llama" {
 		return app.Status{}, errors.New("tinygrad local serving is in development; use llama.cpp")
 	}
@@ -240,6 +255,7 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 	}
 	cfg := s.snapshot()
 	cfg.Local.Model = canonical
+	cfg.Local.Runtime = "llama"
 	if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
 		if rollback != nil {
 			return app.Status{}, fmt.Errorf("load failed: %w; previous-model rollback failed: %v", err, rollback)
@@ -291,20 +307,8 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 	if err != nil {
 		return app.Status{}, err
 	}
-	if s.CatalogLock == nil {
-		return app.Status{}, errors.New("model catalog lock is not configured")
-	}
-	unlock, lockErr := s.CatalogLock.Lock(ctx)
-	if lockErr != nil {
-		return app.Status{}, fmt.Errorf("lock model catalog: %w", lockErr)
-	}
-	err = models.UpdateCatalog(s.ModelCatalog)
-	unlockErr := unlock()
-	if err != nil {
-		return app.Status{}, fmt.Errorf("register local Codex model metadata: %w", err)
-	}
-	if unlockErr != nil {
-		return app.Status{}, fmt.Errorf("unlock model catalog: %w", unlockErr)
+	if err := s.updateLocalCatalog(ctx); err != nil {
+		return app.Status{}, err
 	}
 	if err = s.updateConfig(func(cfg *config.Config) {
 		cfg.Hardware.Vendor = string(detected.Vendor)
@@ -318,6 +322,12 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 
 func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 	cfg := s.snapshot()
+	if model == "arkey-local-vllm" {
+		if err := s.checkVLLM(ctx, cfg); err != nil {
+			return err
+		}
+		return s.Bridge.EnsureRoute(ctx, model)
+	}
 	if model == moonbridgeLocalRoute || cfg.Mode == "local" && model == selectedModel(cfg) {
 		if cfg.Local.Model == "" {
 			return errors.New("no local GGUF is selected")
@@ -377,6 +387,9 @@ func (s *Services) MoonBridgeURL() string {
 func (s *Services) ClientContextWindow() int {
 	cfg := s.snapshot()
 	if cfg.Mode == "local" {
+		if cfg.Local.Runtime == "vllm" {
+			return cfg.Local.VLLMContextSize
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		return s.localContextSize(ctx, cfg)
@@ -448,7 +461,7 @@ func (s *Services) gpuSummary(ctx context.Context, cfg config.Config) string {
 
 func selectedModel(cfg config.Config) string {
 	if cfg.Mode == "local" {
-		return moonbridgeLocalRoute
+		return "arkey-local-" + cfg.Local.Runtime
 	}
 	return frontierModel(cfg.Frontier.Backend)
 }
@@ -570,3 +583,23 @@ func envOr(name, fallback string) string {
 }
 
 var _ app.Services = (*Services)(nil)
+
+func (s *Services) updateLocalCatalog(ctx context.Context) error {
+	if s.CatalogLock == nil {
+		return errors.New("model catalog lock is not configured")
+	}
+	unlock, lockErr := s.CatalogLock.Lock(ctx)
+	if lockErr != nil {
+		return fmt.Errorf("lock model catalog: %w", lockErr)
+	}
+	err := models.UpdateCatalog(s.ModelCatalog)
+	unlockErr := unlock()
+	if err != nil {
+		return fmt.Errorf("register local Codex model metadata: %w", err)
+	}
+	if unlockErr != nil {
+		return fmt.Errorf("unlock model catalog: %w", unlockErr)
+	}
+
+	return nil
+}

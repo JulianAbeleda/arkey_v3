@@ -89,3 +89,19 @@ func TestLegacyMoonBridgeConfigPathIsPreserved(t *testing.T) {
 		t.Fatalf("MoonBridge config = %q, want %q", cfg.MoonBridge.Config, legacyConfig)
 	}
 }
+
+func TestVLLMLocalEndpointValidation(t *testing.T) {
+	for _, endpoint := range []string{"http://example.com:8000", "http://127.0.0.1:8000/v1", "http://user:secret@localhost:8000", "file:///tmp/model"} {
+		c := Default(t.TempDir())
+		c.Local.Runtime = "vllm"
+		c.Local.VLLMURL = endpoint
+		if c.Validate() == nil {
+			t.Errorf("accepted %q", endpoint)
+		}
+	}
+	c := Default(t.TempDir())
+	c.Local.Runtime = "vllm"
+	if c.Validate() != nil {
+		t.Fatal("default vLLM config rejected")
+	}
+}

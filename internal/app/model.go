@@ -98,10 +98,14 @@ func (m Model) selectClient(parent context.Context, generation uint64, name stri
 	}
 }
 func (m Model) activateLocal(parent context.Context, generation uint64, v ModelSummary) tea.Cmd {
+	runtimeName := "llama"
+	if m.screen == localScreen {
+		runtimeName = "vllm"
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 6*time.Minute)
 		defer cancel()
-		s, err := m.services.ActivateLocal(ctx, "llama", v)
+		s, err := m.services.ActivateLocal(ctx, runtimeName, v)
 		return localActivatedMsg{generation: generation, status: s, err: err}
 	}
 }
@@ -416,6 +420,9 @@ func (m *Model) activate() tea.Cmd {
 	case localScreen:
 		if c == 0 {
 			m.notice = "tinygrad is in development and unavailable."
+		} else if c == 2 {
+			generation, ctx := m.begin()
+			return tea.Batch(m.spinner.Tick, m.activateLocal(ctx, generation, ModelSummary{}))
 		} else {
 			generation, ctx := m.begin()
 			return tea.Batch(m.spinner.Tick, m.discover(ctx, generation, false))
@@ -460,7 +467,8 @@ func (m Model) items() []ui.Item {
 	case localScreen:
 		return []ui.Item{
 			{Key: "1", Label: "tinygrad", Detail: "coming later · unavailable", State: "development", Disabled: true},
-			{Key: "2", Label: "llama.cpp", Detail: "local GGUF server", State: m.localRuntimeState()},
+			{Key: "2", Label: "llama.cpp", Detail: "local GGUF server", State: m.runtimeState("llama")},
+			{Key: "3", Label: "vLLM", Detail: "connect to configured local server", State: m.runtimeState("vllm")},
 		}
 	case modelsScreen:
 		out := make([]ui.Item, len(m.models))
@@ -572,3 +580,16 @@ func (m Model) ScreenName() string { return m.title() }
 func (m Model) Cursor() int        { return m.cursors[m.screen] }
 
 var _ tea.Model = Model{}
+
+func (m Model) runtimeState(runtime string) string {
+	if m.status.Route.LocalRuntime != runtime {
+		return ""
+	}
+	if runtime == "vllm" {
+		if m.status.LocalLoaded {
+			return "connected"
+		}
+		return "unavailable"
+	}
+	return m.localRuntimeState()
+}

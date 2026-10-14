@@ -102,3 +102,23 @@ func TestBuildPreservesExplicitOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalReasoningEffortPreservesExplicitOverride(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		parsed := cli.Options{}
+		if explicit {
+			parsed.ClientArgs = []string{"-c", `model_reasoning_effort="low"`}
+		}
+		plan, err := Build(BuildOptions{Parsed: parsed, Model: "arkey-local-vllm", Binary: "/bin/true", ReasoningEffort: "medium"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(plan.Args, " ")
+		if explicit && strings.Contains(joined, `model_reasoning_effort="medium"`) {
+			t.Fatal("overrode explicit effort")
+		}
+		if !explicit && !strings.Contains(joined, `model_reasoning_effort="medium"`) {
+			t.Fatal("missing route effort")
+		}
+	}
+}

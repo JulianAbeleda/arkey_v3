@@ -1,0 +1,42 @@
+--- a/internal/service/server/adapter_dispatch.go
++++ b/internal/service/server/adapter_dispatch.go
+@@ -191,6 +191,9 @@
+ 	// the upstream provider receives the correct model identifier.
+ 	if preferred.Local {
+ 		format.MarkLocalProvider(coreReq)
++        if s.runtime != nil {
++            applyLocalOutputDefault(coreReq, s.runtime.Current().Config, in.Model)
++        }
+ 	}
+ 	coreReq.Model = preferred.UpstreamModel
+ 
+@@ -2846,3 +2849,12 @@
+ 	}
+ 	return result
+ }
++
++// Bound an omitted local output budget by route metadata, preserving explicit requests.
++func applyLocalOutputDefault(req *format.CoreRequest, cfg config.Config, alias string) {
++ if req.MaxTokens > 0 { return }
++ limit := cfg.RouteFor(alias).MaxOutputTokens
++ if limit <= 0 { return }
++ if cfg.DefaultMaxTokens > 0 && cfg.DefaultMaxTokens < limit { limit = cfg.DefaultMaxTokens }
++ req.MaxTokens = limit
++}
+--- a/internal/service/server/adapter_dispatch_test.go
++++ b/internal/service/server/adapter_dispatch_test.go
+@@ -265,3 +265,14 @@
+ 		t.Fatalf("len(coreReq.Tools) = %d, want 0", len(coreReq.Tools))
+ 	}
+ }
++
++func TestLocalOutputDefaultHonorsRouteBudget(t *testing.T) {
++ for _, tc := range []struct{ requested, global, route, want int }{
++  {0,65536,8192,8192}, {256,65536,8192,256}, {0,1024,8192,1024}, {0,65536,0,0}, {0,0,8192,8192},
++ } {
++  req:=&format.CoreRequest{MaxTokens:tc.requested}
++  cfg:=config.Config{DefaultMaxTokens:tc.global,Routes:map[string]config.RouteEntry{"local":{MaxOutputTokens:tc.route}}}
++  applyLocalOutputDefault(req,cfg,"local")
++  if req.MaxTokens!=tc.want {t.Fatalf("%+v: got %d",tc,req.MaxTokens)}
++ }
++}
