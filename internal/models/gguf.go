@@ -12,6 +12,7 @@ import (
 // GGUF holds the subset of a GGUF file's header metadata needed to compute
 // KV-cache cost per token.
 type GGUF struct {
+	Name            string
 	Architecture    string
 	BlockCount      int
 	HeadCount       int
@@ -106,6 +107,7 @@ func ReadGGUF(path string) (GGUF, error) {
 	}
 
 	g := GGUF{}
+	g.Name, _ = kv["general.name"].(string)
 	arch, _ := kv["general.architecture"].(string)
 	g.Architecture = arch
 

@@ -186,6 +186,10 @@ func run(args []string) int {
 		}
 	}
 	if selectedClient == client.Codex {
+		if err = services.RegisterClientModel(ctx, model); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey model metadata:", err)
+			return 1
+		}
 		if err = codex.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), services.ModelCatalog); err != nil {
 			fmt.Fprintln(os.Stderr, "Arkey Codex configuration:", err)
 			return 1

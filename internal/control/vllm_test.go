@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -110,4 +111,49 @@ func TestExplicitRouteOverrideUsesItsOwnClientBudget(t *testing.T) {
 	if got := s.ClientContextWindowFor("arkey-local-llama"); got != 262144 {
 		t.Fatalf("llama inherited vLLM context: %d", got)
 	}
+}
+
+func TestClientCatalogFollowsCheckpointAndContextChanges(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default(home)
+	cfg.Local.ContextSize = 16384
+	cfg.Local.VLLMCheckpoint = filepath.Join(home, "Example-12B")
+	cfg.Local.VLLMContextSize = 65536
+	s := &Services{config: cfg, ModelCatalog: filepath.Join(home, "catalog.json"), CatalogLock: arkeyruntime.FileLock{Path: filepath.Join(home, "catalog.lock")}}
+	check := func(wantName string, wantContext int) {
+		t.Helper()
+		if err := s.RegisterClientModel(context.Background(), "arkey-local-vllm"); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(s.ModelCatalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var catalog struct {
+			Models []struct {
+				Slug   string `json:"slug"`
+				Name   string `json:"display_name"`
+				Window int    `json:"context_window"`
+			}
+		}
+		if err := json.Unmarshal(data, &catalog); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, m := range catalog.Models {
+			if m.Slug == "arkey-local-vllm" {
+				found = true
+				if m.Name != wantName || m.Window != wantContext {
+					t.Fatalf("stale metadata: %+v", m)
+				}
+			}
+		}
+		if !found || len(catalog.Models) != 2 {
+			t.Fatalf("bad catalog: %+v", catalog)
+		}
+	}
+	check("Example 12B", 65536)
+	s.config.Local.VLLMCheckpoint = filepath.Join(home, "Different-8B")
+	s.config.Local.VLLMContextSize = 32768
+	check("Different 8B", 32768)
 }

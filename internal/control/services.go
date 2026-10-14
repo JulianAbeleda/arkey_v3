@@ -380,11 +380,6 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 		}
 		return app.Status{}, err
 	}
-	if runtimeName == "vllm" && regularFile(s.ModelCatalog) {
-		if err := s.updateLocalCatalog(ctx); err != nil {
-			return app.Status{}, err
-		}
-	}
 	if err := s.updateConfig(func(current *config.Config) {
 		current.Mode = "local"
 		current.Local.Runtime = runtimeName
@@ -395,6 +390,11 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 		}
 	}); err != nil {
 		return app.Status{}, err
+	}
+	if regularFile(s.ModelCatalog) {
+		if err := s.updateLocalCatalog(ctx); err != nil {
+			return app.Status{}, err
+		}
 	}
 	return s.Refresh(ctx)
 }
@@ -786,23 +786,44 @@ func envOr(name, fallback string) string {
 
 var _ app.Services = (*Services)(nil)
 
+// RegisterClientModel refreshes display metadata before launching the client,
+// including when a CLI route override differs from the saved selection.
+func (s *Services) RegisterClientModel(ctx context.Context, route string) error {
+	cfg := s.configForRoute(route)
+	if cfg.Mode != "local" {
+		return nil
+	}
+	return s.writeLocalMetadata(ctx, cfg)
+}
+
 func (s *Services) updateLocalCatalog(ctx context.Context) error {
+	return s.writeLocalMetadata(ctx, s.snapshot())
+}
+
+func (s *Services) writeLocalMetadata(ctx context.Context, cfg config.Config) (err error) {
 	if s.CatalogLock == nil {
 		return errors.New("model catalog lock is not configured")
 	}
-	unlock, lockErr := s.CatalogLock.Lock(ctx)
-	if lockErr != nil {
-		return fmt.Errorf("lock model catalog: %w", lockErr)
-	}
-	err := models.UpdateCatalog(s.ModelCatalog)
-	unlockErr := unlock()
+	unlock, err := s.CatalogLock.Lock(ctx)
 	if err != nil {
-		return fmt.Errorf("register local Codex model metadata: %w", err)
+		return fmt.Errorf("lock model catalog: %w", err)
 	}
-	if unlockErr != nil {
-		return fmt.Errorf("unlock model catalog: %w", unlockErr)
+	defer func() { err = errors.Join(err, unlock()) }()
+	if err := models.EnsureCatalog(s.ModelCatalog); err != nil {
+		return err
 	}
-
+	for _, engine := range []string{"llama", "vllm"} {
+		path, window, effort := cfg.Local.Model, 0, ""
+		if engine == "vllm" {
+			path, window, effort = cfg.Local.VLLMCheckpoint, cfg.Local.VLLMContextSize, cfg.Local.VLLMReasoningEffort
+		} else {
+			window = s.localContextSize(ctx, cfg)
+		}
+		route := "arkey-local-" + engine
+		if err := models.UpdateCatalogWith(s.ModelCatalog, route, models.EngineMetadata(engine, path, window, effort)); err != nil {
+			return fmt.Errorf("register local model metadata: %w", err)
+		}
+	}
 	return nil
 }
 

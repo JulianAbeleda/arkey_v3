@@ -62,6 +62,22 @@ Arkey checks `llama-server` on PATH before scanning source checkouts; a Homebrew
 installation is supported. It verifies that llama reports an Apple Metal device
 and that model layers were offloaded before saving the local selection.
 
+## Model names and context
+
+Before launching a local Codex route, Arkey refreshes its catalog display name
+from the selected checkpoint: GGUF `general.name`, Hugging Face `_name_or_path`,
+or the checkpoint filename/directory when metadata is absent. No model-family
+name is hardcoded. The internal `arkey-local-*` route IDs remain stable.
+The current copied Codex binary still prints the route ID in its footer; using
+the catalog display name there requires a client display change.
+
+vLLM uses the explicit `local.vllm_context_size` (default 32,768 tokens).
+llama.cpp uses `local.context_size`; zero derives a window from model metadata,
+GPU memory, and the configured KV-cache precision. The client receives the same
+resolved context as its engine. Catalog metadata reserves 10% of that context,
+and the client output budget is one quarter of the window, clamped to
+4,096–32,768 tokens. The reasoning label such as `medium` is a separate setting.
+
 ## Shared local inference
 
 Arkey owns the local llama-server used by both GameTerm and the coding
