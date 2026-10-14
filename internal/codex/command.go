@@ -53,11 +53,31 @@ func Build(opts BuildOptions) (Plan, error) {
 		args = append([]string{"-c", fmt.Sprintf("model_reasoning_effort=%q", opts.ReasoningEffort)}, args...)
 	}
 	args = append([]string{"--sandbox", "workspace-write"}, args...)
+	args = configScope(args)
 
 	env := append([]string(nil), opts.Environment...)
 	env = client.SetEnv(env, "CODEX_HOME", opts.CodexHome)
 	env = client.SetEnv(env, "CODEX_THREAD_ID", "")
+	// The MoonBridge provider table names ARKEY_MOONBRIDGE_TOKEN as its
+	// env_key, and Codex refuses to start when a named key is absent. Kimi
+	// and Crush get the same default in their config; Codex gets it here.
+	if !hasEnv(env, "ARKEY_MOONBRIDGE_TOKEN") {
+		env = client.SetEnv(env, "ARKEY_MOONBRIDGE_TOKEN", DefaultBridgeToken)
+	}
 	return Plan{Binary: opts.Binary, Args: args, Env: env}, nil
+}
+
+// DefaultBridgeToken is what every Arkey client presents to MoonBridge
+// when nobody set one.
+const DefaultBridgeToken = "arkey-moonbridge"
+
+func hasEnv(env []string, key string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, key+"=") && len(entry) > len(key)+1 {
+			return true
+		}
+	}
+	return false
 }
 
 func DefaultBinary(home string) string {
@@ -91,6 +111,52 @@ func ensureExecSkip(args []string) []string {
 			out = append(out, args[i+1:]...)
 			return out
 		}
+	}
+	return args
+}
+
+// Codex exec has its own -c collection. Supplying even one exec-level override
+// can discard root-level overrides. Keep all configuration together at exec
+// scope, with generated defaults before explicit user values.
+func configScope(args []string) []string {
+	var configs, rest []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			rest = append(rest, args[i:]...)
+			break
+		}
+		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
+			configs = append(configs, "-c", args[i+1])
+			i++
+			continue
+		}
+		if value, ok := strings.CutPrefix(arg, "--config="); ok {
+			configs = append(configs, "-c", value)
+			continue
+		}
+		rest = append(rest, arg)
+	}
+	// The first positional is the command (or the interactive prompt). Skip
+	// values of the root options that can precede it; never inspect prompt text.
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--":
+			return args
+		case "-m", "--model", "-s", "--sandbox", "-p", "--profile", "-C", "--cd", "-i", "--image", "--enable", "--disable", "-a", "--ask-for-approval", "--add-dir", "--local-provider":
+			i++
+			continue
+		}
+		if strings.HasPrefix(rest[i], "-") {
+			continue
+		}
+		if rest[i] != "exec" {
+			return args
+		}
+		at := i + 1
+		out := append([]string(nil), rest[:at]...)
+		out = append(out, configs...)
+		return append(out, rest[at:]...)
 	}
 	return args
 }

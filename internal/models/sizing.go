@@ -27,6 +27,37 @@ const runtimeOverheadBytes int64 = 1 << 30
 // on a headless box and OOMs on a desktop one.
 const safetyMarginBytes int64 = 3 << 29 // 1.5 GiB
 
+// unifiedHostShare is the share of a unified-memory machine the local model
+// may occupy in total: weights, runtime overhead and KV cache together.
+//
+// The 1.5 GiB safety margin above is sized for a discrete card, where it only
+// has to cover the display server and driver allocations. On Apple Silicon
+// the same pool is the operating system, the window server, every other
+// application and the file cache, so a margin is the wrong shape: what is
+// needed is a ceiling on the model's whole footprint.
+//
+// Measured on a 16 GiB M-series Mac, 2026-09-10, Qwen3-8B-Q4_K_M with q8_0 KV:
+//
+//	ctx 16384  wired 11.33 GiB  free 699 MB  audio output opens
+//	ctx 32768  wired 12.54 GiB  free  60 MB  audio output refused, every config
+//
+// Those two windows cost 6.81 GiB and 7.93 GiB of the machine respectively,
+// weights and overhead included, so the boundary this constant has to fall
+// between is 42.6% and 49.6%. It sits at the low end of that: the machine was
+// already marginal at the point that worked, with 699 MB free and Safari not
+// yet in the picture.
+//
+// It cannot go much lower either, which is the other half of the measurement.
+// At 40% this model derives 8192 tokens, and GameTerm's own system prompt is
+// 8,891 — a window too small to hold the prompt that goes in it is not a
+// smaller session, it is a broken one. 43% is the band where the derived
+// window both fits its client and leaves the machine able to play a sound.
+//
+// It is a measured ceiling and not a derived quantity, like
+// runtimeOverheadBytes above. On a larger machine it stops binding: the
+// model's native context length caps the result first.
+const unifiedHostShare = 43
+
 // DeriveContextSize computes the largest context length whose KV cache fits in
 // VRAM alongside the model weights, clamped to what the model itself supports.
 //
@@ -40,12 +71,17 @@ const safetyMarginBytes int64 = 3 << 29 // 1.5 GiB
 // VRAM, unreadable metadata, or a machine too small to reach
 // MinDerivedContext). Callers must treat 0 as "fall back to the configured
 // value" rather than as a size.
-func DeriveContextSize(g GGUF, modelBytes, totalVRAMBytes int64, bytesPerElement int) int {
+func DeriveContextSize(g GGUF, modelBytes, totalVRAMBytes int64, bytesPerElement int, unified bool) int {
 	perToken := g.KVBytesPerToken(bytesPerElement)
 	if perToken < 1 || modelBytes < 1 || totalVRAMBytes < 1 {
 		return 0
 	}
 	budget := totalVRAMBytes - modelBytes - runtimeOverheadBytes - safetyMarginBytes
+	if unified {
+		// The ceiling is on everything the model costs, so the weights and
+		// the runtime overhead come out of the same share the KV cache does.
+		budget = totalVRAMBytes*unifiedHostShare/100 - modelBytes - runtimeOverheadBytes
+	}
 	if budget < 1 {
 		return 0
 	}
@@ -62,7 +98,7 @@ func DeriveContextSize(g GGUF, modelBytes, totalVRAMBytes int64, bytesPerElement
 
 // DeriveContextSizeForModel reads the GGUF at path and derives a context size
 // for it. Returns 0 if the file cannot be read or measured.
-func DeriveContextSizeForModel(path string, totalVRAMBytes int64, bytesPerElement int) int {
+func DeriveContextSizeForModel(path string, totalVRAMBytes int64, bytesPerElement int, unified bool) int {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return 0
@@ -71,5 +107,5 @@ func DeriveContextSizeForModel(path string, totalVRAMBytes int64, bytesPerElemen
 	if err != nil {
 		return 0
 	}
-	return DeriveContextSize(g, info.Size(), totalVRAMBytes, bytesPerElement)
+	return DeriveContextSize(g, info.Size(), totalVRAMBytes, bytesPerElement, unified)
 }

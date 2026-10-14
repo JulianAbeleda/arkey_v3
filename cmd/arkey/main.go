@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -57,6 +59,48 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Arkey configuration:", err)
 		return 1
+	}
+	// --stop-local-runtime: release the model without forgetting the
+	// selection, the way the Config screen's unload does. It exists because
+	// the only other way to free that memory was for a client to kill the
+	// port, which is a client reaching across a boundary to end a process it
+	// does not own and cannot know who else is using.
+	if len(parsed.ClientArgs) == 1 && parsed.ClientArgs[0] == "--stop-local-runtime" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, err := services.UnloadLocal(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey local runtime:", err)
+			return 1
+		}
+		fmt.Println("local runtime stopped")
+		return 0
+	}
+	if len(parsed.ClientArgs) == 1 && (parsed.ClientArgs[0] == "--local-runtime" || parsed.ClientArgs[0] == "--ensure-local-runtime") {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		descriptor, err := services.LocalRuntime(ctx, parsed.ClientArgs[0] == "--ensure-local-runtime")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey local runtime:", err)
+			return 1
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(descriptor); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+	// --select-server=ORIGIN: the Config → Server screen's Enter, without the
+	// screen, for a script or a first setup over ssh.
+	if origin, ok := strings.CutPrefix(firstArg(parsed.ClientArgs), "--select-server="); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		status, selectErr := services.SelectServer(ctx, origin)
+		if selectErr != nil {
+			fmt.Fprintln(os.Stderr, "Arkey server:", selectErr)
+			return 1
+		}
+		fmt.Printf("Server route selected: %s (%s) · model %s · %s\n", status.Route.ServerLabel, status.Route.ServerOrigin, status.Route.ServerModel, status.Runtime)
+		return 0
 	}
 	model := services.SelectedModel()
 	selectedClient := services.SelectedClient()
@@ -141,6 +185,12 @@ func run(args []string) int {
 			return 1
 		}
 	}
+	if selectedClient == client.Codex {
+		if err = codex.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), services.ModelCatalog); err != nil {
+			fmt.Fprintln(os.Stderr, "Arkey Codex configuration:", err)
+			return 1
+		}
+	}
 	if selectedClient == client.Kimi {
 		if err = kimi.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model, services.ClientContextWindowFor(model)); err != nil {
 			fmt.Fprintln(os.Stderr, "Arkey Kimi configuration:", err)
@@ -172,4 +222,11 @@ func shouldBoot(parsed cli.Options) bool {
 func isTerminal(file *os.File) bool {
 	_, err := unix.IoctlGetTermios(int(file.Fd()), ioctlReadTermios)
 	return err == nil
+}
+
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }

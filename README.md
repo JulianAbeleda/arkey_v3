@@ -45,12 +45,115 @@ Config
     llama.cpp
       installed GGUF models
       Enter loads · r refreshes · d unloads the active model
+  Server
+    one row per [[servers]] entry in config.toml
+    Enter probes the server and makes it the route
   Frontier
     DeepSeek
     Codex
     Claude
   GPU Auto-scan
 Exit
+```
+
+On Apple Silicon, local models use llama.cpp's Metal backend. Selecting a model
+automatically configures the GPU and runtime when they have not been configured.
+Arkey checks `llama-server` on PATH before scanning source checkouts; a Homebrew
+installation is supported. It verifies that llama reports an Apple Metal device
+and that model layers were offloaded before saving the local selection.
+
+## Shared local inference
+
+Arkey owns the local llama-server used by both GameTerm and the coding
+clients. `~/.config/arkey/config.toml` is the authority for its selected
+model, binary, port and context; MoonBridge's local route is projected from
+that configuration when the service is ensured.
+
+Native clients use `arkey --local-runtime` for a credential-free JSON
+descriptor, or `arkey --ensure-local-runtime` to start/reuse the service and
+return the descriptor. The `arkey.local-runtime.v1` object contains `origin`,
+`model`, `context_size` and `slots_path`. These commands do not launch a TUI
+or change the selected client/route. Repeated ensures use the existing
+cross-process lock and verified process identity; they do not replace an
+unmanaged listener. GameTerm no longer owns or stops llama-server.
+
+The server uses one slot, quantized KV, no separate RAM prompt cache, and
+Arkey-managed disk slot storage scoped to the selected model and context.
+The isolated Codex home defaults to MoonBridge; exec-level configuration
+flags are kept together so an effort override cannot discard its route.
+Clients share model memory and serialize
+requests; a client switch may require a cold prompt evaluation.
+
+## Server route
+
+A llama.cpp server somebody else runs, on this machine or another one, is a
+route beside Local and Frontier. List the candidates in
+`~/.config/arkey/config.toml`:
+
+```toml
+[[servers]]
+label = "Ubuntu · Tailscale"
+origin = "http://100.106.46.126:8080"
+```
+
+Config → Server → Enter probes the server (`/health`, `/v1/models`,
+`/props`), writes a `llama-server` provider and the `arkey-server-llama`
+route into the MoonBridge config with the server's own model name and
+context window, registers the Codex model metadata, and persists
+`mode = "server"`. Nothing is started for this route; the next launch
+restarts the Arkey-owned MoonBridge so it reads the route. The same
+selection without the screen, for a script or a first setup:
+
+```bash
+arkey --select-server=http://100.106.46.126:8080
+arkey --no-boot exec "Reply with the single word ready."
+```
+
+`scripts/smoke-server-route.sh ORIGIN` proves the route on the installed
+Arkey: selects the server, launches Codex through MoonBridge with a marker
+prompt, and checks the reply, the launch warnings and MoonBridge's route
+line.
+
+The provider is written with `local: true`. That flag is not about where
+the server runs; it tells MoonBridge the upstream is a llama.cpp-style
+server, so it streams reasoning in the shape Codex reads. Without it Codex
+logs `ReasoningSummaryDelta without active item` and drops the thinking.
+
+### Thinking, per request
+
+A llama.cpp server has one thinking switch and it is binary: the template's
+thinking branch runs or it does not. It ignores `reasoning_effort`.
+MoonBridge translates, so every client above it speaks one vocabulary:
+`minimal`, `none` and `off` mean no thinking, any other level means
+thinking, and no effort at all leaves the server's own `--reasoning`
+default alone. In Arkey Codex it is a two-position switch in `/model`, named for what it
+does rather than for a level that would mean nothing on a llama.cpp server:
+
+```
+Select Reasoning Level for arkey-server-llama
+  1. Off   The model answers straight away.
+› 2. On    The model works the problem through first, and takes longer.
+```
+
+Codex prints the effort string as the label and accepts names outside its
+own low/medium/high vocabulary, so the menu can say Off and On. Arkey
+writes both entries into the Codex model catalog; MoonBridge folds the case
+and reads `off` as no thinking. Measured against Ubuntu on a question that needs
+real reasoning: about 10 s at `minimal`, about 43 s at `high`.
+
+The server must listen beyond loopback for another machine to reach it
+(`--host 0.0.0.0`, or a tailnet address). Arkey never starts a server
+that way itself.
+
+Codex's isolated home (`~/.codex-moonbridge/config.toml`) gets its
+`model_providers.moonbridge` table from Arkey at launch when it is missing
+or the bridge address moved; nothing else in that file is touched.
+
+On macOS the official Codex from npm is a Node wrapper; snapshot the native
+binary it wraps:
+
+```bash
+ARKEY_CODEX_SOURCE_BIN=/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex scripts/snapshot-clients.sh
 ```
 
 ## Install

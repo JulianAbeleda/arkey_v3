@@ -15,6 +15,25 @@ fi
 mkdir -p "$client_root"
 chmod 0700 "$client_root"
 
+first_installed_at() (
+  local candidate match
+  for candidate in "$@"; do
+    if [[ "$candidate" == *"*"* ]]; then
+      match="$(compgen -G "$candidate" 2>/dev/null | head -n 1)" || match=""
+      if [[ -n "$match" ]]; then
+        printf '%s\n' "$match"
+        return 0
+      fi
+      continue
+    fi
+    if [[ -e "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  printf '%s\n' "$1"
+)
+
 snapshot_client() (
   local name="$1" source="$2" destination_dir destination resolved temporary metadata version digest
   destination_dir="${client_root}/${name}"
@@ -60,9 +79,31 @@ snapshot_client() (
   printf 'Snapshotted %-6s %s\n' "$name" "${version:-$digest}"
 )
 
-snapshot_client codex "${ARKEY_CODEX_SOURCE_BIN:-${arkey_user_home}/.local/bin/codex}"
-snapshot_client claude "${ARKEY_CLAUDE_SOURCE_BIN:-${arkey_user_home}/.local/bin/claude}"
-snapshot_client kimi "${ARKEY_KIMI_SOURCE_BIN:-${arkey_user_home}/.kimi-code/bin/kimi}"
-snapshot_client crush "${ARKEY_CRUSH_SOURCE_BIN:-${arkey_user_home}/.local/bin/crush}"
+# Each client is looked up in the places its own installer uses. The first path
+# that exists wins. Setting the matching ARKEY_*_SOURCE_BIN variable overrides
+# the search for that one client.
+codex_source="$(first_installed_at \
+  "${arkey_user_home}/.local/bin/codex" \
+  "/opt/homebrew/lib/node_modules/@openai/codex/node_modules/@openai/codex-"*"/vendor/"*"/bin/codex" \
+  "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-"*"/vendor/"*"/bin/codex" \
+  "${arkey_user_home}/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-"*"/vendor/"*"/bin/codex")"
+claude_source="$(first_installed_at \
+  "${arkey_user_home}/.local/bin/claude" \
+  "${arkey_user_home}/.claude/local/claude" \
+  "/opt/homebrew/bin/claude" \
+  "/usr/local/bin/claude")"
+kimi_source="$(first_installed_at \
+  "${arkey_user_home}/.kimi-code/bin/kimi" \
+  "${arkey_user_home}/.local/bin/kimi")"
+crush_source="$(first_installed_at \
+  "${arkey_user_home}/.local/bin/crush" \
+  "/opt/homebrew/bin/crush" \
+  "/usr/local/bin/crush" \
+  "${arkey_user_home}/go/bin/crush")"
+
+snapshot_client codex "${ARKEY_CODEX_SOURCE_BIN:-$codex_source}"
+snapshot_client claude "${ARKEY_CLAUDE_SOURCE_BIN:-$claude_source}"
+snapshot_client kimi "${ARKEY_KIMI_SOURCE_BIN:-$kimi_source}"
+snapshot_client crush "${ARKEY_CRUSH_SOURCE_BIN:-$crush_source}"
 
 printf 'Arkey-owned client snapshots: %s\n' "$client_root"

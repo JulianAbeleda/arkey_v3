@@ -7,9 +7,31 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMetalAccelerationRequiresOffload(t *testing.T) {
+	for _, tc := range []struct {
+		log  string
+		want bool
+	}{
+		{"load_tensors: offloaded 37/37 layers to GPU\nMTL0 (Apple M3)", true},
+		{"load_tensors: offloaded 0/37 layers to GPU\nMTL0 (Apple M3)", false},
+		{"model loaded", false},
+	} {
+		path := filepath.Join(t.TempDir(), "llama.log")
+		if err := os.WriteFile(path, []byte(tc.log), 0600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := (OtoolBackend{}).Accelerated(context.Background(), path, "metal")
+		if err != nil || got != tc.want {
+			t.Fatal(got, err, tc.log)
+		}
+	}
+}
 
 // fakeRunner returns canned output keyed by a substring of the argv, and records
 // the exact commands it was asked to run so tests can assert no shell is used.

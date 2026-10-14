@@ -74,3 +74,19 @@ at `/home/ubuntu/storage/arkey-managed-smoke-20261014/`. Client logs remain outs
 The earlier Codex shell-tool failure (`bwrap: loopback: Failed RTM_NEWADDR`) is a separate
 host sandbox limitation and was not bypassed. API tool round trips pass; this record does
 not claim that the sandbox issue or long-context CUDA graph issue is fixed.
+
+## Integration with concurrent main changes
+
+Before publishing, origin/main had advanced to `6c3c68d`. The merge retains the
+network Server route, Apple Silicon detection and unified-memory sizing, shared
+llama slot storage, and the updated Codex routing. Local engine adapters now carry
+the llama slot path through launch matching and rollback, and route-specific client
+budgets include Server as well as llama and vLLM. The Linux GPU fallback uses named
+fields to accommodate the added unified-memory flag.
+
+The merged tree passed `go test -race ./...`, `go vet ./...`, and the Darwin/arm64
+compile check above. The local output-budget patch applies to the newer MoonBridge
+pin `e11d9b8be1a3ddbb5515b1486f0abad6110a6308`; its server-package tests passed in an
+exported build tree. A merged Arkey binary returned `ARKEY_MERGED_OK` through Codex
+using the existing AWQ service (PID 622241), without reloading the model. This
+additional smoke does not repeat the cold-load matrix or test macOS at runtime.

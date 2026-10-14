@@ -14,7 +14,7 @@ func (c Config) validate() error {
 	if c.Server == "" || c.LogPath == "" || c.Port < 1 || c.Port > 65535 || c.ContextSize < 1 {
 		return fmt.Errorf("runtime: invalid configuration")
 	}
-	if c.Vendor != "nvidia" && c.Vendor != "amd" {
+	if c.Vendor != "nvidia" && c.Vendor != "amd" && c.Vendor != "metal" {
 		return fmt.Errorf("runtime: unsupported GPU vendor %q", c.Vendor)
 	}
 	return nil
@@ -44,6 +44,10 @@ const (
 // Preserve acceleration verification without enabling debug-level logging.
 func llamaArgs(c Config) []string {
 	args := []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType, "--log-verbosity", "4"}
+	args = append(args, "--cache-ram", "0", "--metrics")
+	if c.SlotsPath != "" {
+		args = append(args, "--slot-save-path", c.SlotsPath)
+	}
 	if c.ChatTemplate != "" {
 		args = append(args, "--chat-template-file", c.ChatTemplate)
 	}

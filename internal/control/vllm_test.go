@@ -12,6 +12,7 @@ import (
 
 	"github.com/JulianAbeleda/arkey_v3/internal/app"
 	"github.com/JulianAbeleda/arkey_v3/internal/config"
+	"github.com/JulianAbeleda/arkey_v3/internal/gpu"
 	"github.com/JulianAbeleda/arkey_v3/internal/moonbridge"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
@@ -55,7 +56,7 @@ func TestVLLMUsesSharedModelLifecycle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"data":[{"id":"arkey-local-vllm"}]}`) }))
 	defer server.Close()
 	runtime := &fakeLocalRuntime{}
-	s := &Services{Paths: paths, Store: store, config: cfg, Runtime: runtime, BridgeClient: moonbridge.Client{BaseURL: server.URL}}
+	s := &Services{Paths: paths, Store: store, config: cfg, Runtime: runtime, Detector: gpu.Detector{Runner: scanRunner{}}, BridgeClient: moonbridge.Client{BaseURL: server.URL}}
 	discovered, err := s.DiscoverModels(context.Background(), "vllm")
 	if err != nil || len(discovered) != 1 {
 		t.Fatalf("discovery: %#v %v", discovered, err)

@@ -16,7 +16,7 @@ func TestBuildInjectsRouteAndExecCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--sandbox", "workspace-write", "-c", MoonBridgeProvider, "-c", "model=arkey-local-llama", "exec", "--skip-git-repo-check", "test"}
+	want := []string{"--sandbox", "workspace-write", "exec", "-c", MoonBridgeProvider, "-c", "model=arkey-local-llama", "--skip-git-repo-check", "test"}
 	if !reflect.DeepEqual(plan.Args, want) {
 		t.Fatalf("args = %#v, want %#v", plan.Args, want)
 	}
@@ -119,6 +119,65 @@ func TestLocalReasoningEffortPreservesExplicitOverride(t *testing.T) {
 		}
 		if !explicit && !strings.Contains(joined, `model_reasoning_effort="medium"`) {
 			t.Fatal("missing route effort")
+		}
+	}
+}
+
+func TestBuildCarriesTheBridgeTokenUnlessSet(t *testing.T) {
+	plan, err := Build(BuildOptions{Parsed: cli.Options{ClientArgs: []string{"exec", "test"}}, Model: "arkey-server-llama", Binary: "/bin/true", CodexHome: "/tmp/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN="+DefaultBridgeToken) {
+		t.Fatalf("env = %v", plan.Env)
+	}
+	plan, _ = Build(BuildOptions{Parsed: cli.Options{ClientArgs: []string{"exec", "test"}}, Model: "m", Binary: "/bin/true", CodexHome: "/tmp/h", Environment: []string{"ARKEY_MOONBRIDGE_TOKEN=mine"}})
+	if !contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN=mine") || contains(plan.Env, "ARKEY_MOONBRIDGE_TOKEN="+DefaultBridgeToken) {
+		t.Fatalf("a set token must stand: %v", plan.Env)
+	}
+}
+
+func contains(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestExecOverridesCannotDropMoonBridgeRouting(t *testing.T) {
+	parsed, err := cli.Parse([]string{"exec", "-c", `model_reasoning_effort="off"`, "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Build(BuildOptions{Parsed: parsed, Model: "arkey-local-llama", Binary: "/bin/true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execAt := -1
+	for i, arg := range plan.Args {
+		if arg == "exec" {
+			execAt = i
+		}
+		if arg == "-c" && execAt < 0 {
+			t.Fatalf("root config would be lost: %v", plan.Args)
+		}
+	}
+	for _, want := range []string{MoonBridgeProvider, "model=arkey-local-llama", `model_reasoning_effort="off"`} {
+		if !contains(plan.Args, want) {
+			t.Fatalf("lost %s: %v", want, plan.Args)
+		}
+	}
+}
+
+func TestInteractivePromptAndDelimiterAreNotCommands(t *testing.T) {
+	for _, args := range [][]string{
+		{"-c", "x=1", "--", "exec"},
+		{"-c", "x=1", "Explain exec", "-c", "y=2"},
+	} {
+		if got := configScope(args); !reflect.DeepEqual(got, args) {
+			t.Fatalf("changed prompt: %v", got)
 		}
 	}
 }

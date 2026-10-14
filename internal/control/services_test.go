@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JulianAbeleda/arkey_v3/internal/config"
@@ -33,7 +34,7 @@ func TestBridgeExistingRouteDoesNotRestart(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := BridgeManager{Client: moonbridge.Client{BaseURL: server.URL}}
-	if err := manager.EnsureLocalRoute(context.Background()); err != nil {
+	if err := manager.EnsureRoute(context.Background(), moonbridgeLocalRoute); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -237,5 +238,109 @@ func TestGPUScanDoesNotRequireLlamaForVLLM(t *testing.T) {
 	}
 	if s.snapshot().Hardware.Vendor != "nvidia" || s.snapshot().Local.LlamaServer != "" || status.GPU == "not scanned" {
 		t.Fatalf("GPU scan depends on llama: %+v", status)
+	}
+}
+
+func TestSelectServerProbesWritesTheRouteAndPersists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	paths := platform.DefaultPaths(home)
+	store := config.Store{Path: paths.ConfigFile(), Home: home}
+	cfg := config.Default(home)
+	cfg.MoonBridge.Config = filepath.Join(home, "moonbridge.yml")
+	cfg.Servers = []config.ServerEntry{{Label: "Ubuntu", Origin: ""}}
+	llama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-served"}]}`))
+		case "/props":
+			_, _ = w.Write([]byte(`{"default_generation_settings":{"n_ctx":65536}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer llama.Close()
+	cfg.Servers[0].Origin = llama.URL
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	catalog := filepath.Join(home, "models_catalog.json")
+	if err := os.WriteFile(catalog, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"arkey-server-llama"}]}`))
+	}))
+	defer bridge.Close()
+	services := &Services{
+		Paths: paths, Store: store, CodexBinary: "/bin/true", Workspace: home,
+		BridgeClient: moonbridge.Client{BaseURL: bridge.URL}, ModelCatalog: catalog,
+		ServerHTTP: llama.Client(), config: cfg,
+	}
+	status, err := services.SelectServer(context.Background(), llama.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Route.Mode != "server" || status.Route.Model != "arkey-server-llama" || status.Route.ServerModel != "qwen-served" || status.Route.ServerLabel != "Ubuntu" {
+		t.Fatalf("route = %#v", status.Route)
+	}
+	if status.Runtime != "server reachable" || len(status.Servers) != 1 || !status.Servers[0].Selected {
+		t.Fatalf("status = %#v", status)
+	}
+	if got := services.ClientContextWindow(); got != 65536 {
+		t.Fatalf("client context window = %d", got)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.Mode != "server" || loaded.Server.ContextSize != 65536 {
+		t.Fatalf("persisted %#v, %v", loaded, err)
+	}
+	yml, _ := os.ReadFile(cfg.MoonBridge.Config)
+	if !strings.Contains(string(yml), llama.URL) || !strings.Contains(string(yml), "upstream_name: qwen-served") {
+		t.Fatalf("MoonBridge config:\n%s", yml)
+	}
+	registered, _ := os.ReadFile(catalog)
+	if !strings.Contains(string(registered), `"slug": "arkey-server-llama"`) || !strings.Contains(string(registered), `"context_window": 65536`) {
+		t.Fatalf("catalog:\n%s", registered)
+	}
+	if !services.serverChanged {
+		t.Fatal("a rewritten MoonBridge config must ask for a restart at launch")
+	}
+	if _, err := services.SelectServer(context.Background(), "http://127.0.0.1:1"); err == nil {
+		t.Fatal("an unreachable server must be refused")
+	}
+}
+
+func TestLocalRuntimeDescriptorUsesCentralConfigWithoutChangingSelectedRoute(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default(home)
+	cfg.Mode = "server"
+	cfg.Local.Model = filepath.Join(home, "chosen.gguf")
+	cfg.Local.Port = 8099
+	cfg.Local.ContextSize = 16384
+	s := &Services{Paths: platform.DefaultPaths(home), config: cfg}
+	descriptor, err := s.LocalRuntime(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if descriptor.Schema != "arkey.local-runtime.v1" || descriptor.Origin != "http://127.0.0.1:8099" || descriptor.Model != "arkey-local" || descriptor.ContextSize != 16384 {
+		t.Fatalf("unexpected descriptor: %+v", descriptor)
+	}
+	runtime := runtimeConfig(cfg, s.Paths, 16384)
+	if descriptor.SlotsPath != runtime.SlotsPath || s.config.Mode != "server" {
+		t.Fatal("descriptor diverged from launch or changed the selected route")
+	}
+}
+
+func TestSharedSlotStorageIsScopedToModelAndContext(t *testing.T) {
+	paths := platform.DefaultPaths(t.TempDir())
+	a := localSlots(paths, "/models/a.gguf", 32768)
+	if a != localSlots(paths, "/models/a.gguf", 32768) {
+		t.Fatal("unstable storage")
+	}
+	if a == localSlots(paths, "/models/b.gguf", 32768) || a == localSlots(paths, "/models/a.gguf", 16384) {
+		t.Fatal("incompatible KV state would share a directory")
 	}
 }

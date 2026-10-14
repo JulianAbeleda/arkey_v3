@@ -17,6 +17,11 @@ type modelsDiscoveredMsg struct {
 	refresh    bool
 	err        error
 }
+type serverSelectedMsg struct {
+	generation uint64
+	status     Status
+	err        error
+}
 type frontierSelectedMsg struct {
 	generation uint64
 	status     Status

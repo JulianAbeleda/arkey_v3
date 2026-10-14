@@ -52,3 +52,37 @@ func TestDiscoverResolvesSymlinkedRoot(t *testing.T) {
 		t.Fatalf("model path = %q, want %q", discovery.Models[0].Path, modelPath)
 	}
 }
+
+// The server model's `/model` menu is a switch, not a dial: llama.cpp has
+// one thinking position and its opposite, so offering low and medium would
+// be three entries that behave identically.
+func TestServerMetadataOffersTwoReasoningPositions(t *testing.T) {
+	meta := ServerMetadata(262144)
+	levels, ok := meta["supported_reasoning_levels"].([]any)
+	if !ok || len(levels) != 2 {
+		t.Fatalf("supported_reasoning_levels = %#v", meta["supported_reasoning_levels"])
+	}
+	var efforts []string
+	for _, level := range levels {
+		entry, ok := level.(map[string]any)
+		if !ok {
+			t.Fatalf("level is not an object: %#v", level)
+		}
+		effort, _ := entry["effort"].(string)
+		efforts = append(efforts, effort)
+		if description, _ := entry["description"].(string); description == "" {
+			t.Errorf("%q has no description, and the label alone cannot say off or on", effort)
+		}
+	}
+	// Codex prints the effort string as the label, so the label says what the
+	// switch does. MoonBridge folds the case and reads `off` as no thinking.
+	if efforts[0] != "Off" || efforts[1] != "On" {
+		t.Fatalf("efforts = %v, want [Off On]", efforts)
+	}
+	if meta["default_reasoning_level"] != "On" {
+		t.Fatalf("default = %v, want On", meta["default_reasoning_level"])
+	}
+	if meta["context_window"] != 262144 {
+		t.Fatalf("context window did not survive: %v", meta["context_window"])
+	}
+}
