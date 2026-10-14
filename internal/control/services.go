@@ -184,10 +184,13 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 	status.GPU = s.gpuSummary(ctx, cfg)
 	status.Servers = s.serverSummaries(cfg)
 	if cfg.Mode == "server" {
-		if _, err := llamaserver.Probe(ctx, s.serverHTTP(), cfg.Server.Origin); err == nil {
-			status.Runtime = "server reachable"
-		} else {
+		switch found, err := s.reachableServer(ctx, cfg); {
+		case err != nil:
 			status.Runtime = "server unreachable"
+		case found.fellBack:
+			status.Runtime = fmt.Sprintf("server reachable via %s (%s offline)", found.label, serverName(cfg.Server.Label, cfg.Server.Origin))
+		default:
+			status.Runtime = "server reachable"
 		}
 	}
 	if cfg.Local.Runtime == "vllm" {
@@ -240,7 +243,7 @@ func (s *Services) ValidateClient(client string) error {
 	return nil
 }
 
-// SelectServer makes the llama.cpp server at origin the route: it asks the
+// SelectServer makes the OpenAI-compatible server at origin the route: it asks the
 // server what it serves and how much context it has, writes that into the
 // MoonBridge config and the Codex model catalog, and persists the choice.
 // Nothing is started; the server is somebody else's to run.
@@ -289,6 +292,41 @@ func (s *Services) SelectServer(ctx context.Context, origin string) (app.Status,
 		s.mu.Unlock()
 	}
 	return s.Refresh(ctx)
+}
+
+// foundServer is the server a route can use right now and what it serves.
+type foundServer struct {
+	origin, label string
+	info          llamaserver.Info
+	fellBack      bool // the selected server did not answer; another configured one did
+}
+
+// reachableServer probes the selected server, then every other configured
+// server in order, and returns the first that answers. Which engine runs
+// behind an origin, and which model it serves, may change between launches
+// (llama.cpp and vLLM take turns on one GPU), so the answer is read from the
+// server each time rather than trusted from the saved selection.
+func (s *Services) reachableServer(ctx context.Context, cfg config.Config) (foundServer, error) {
+	info, firstErr := llamaserver.Probe(ctx, s.serverHTTP(), cfg.Server.Origin)
+	if firstErr == nil {
+		return foundServer{origin: cfg.Server.Origin, label: serverName(cfg.Server.Label, cfg.Server.Origin), info: info}, nil
+	}
+	for _, entry := range cfg.Servers {
+		if entry.Origin == "" || entry.Origin == cfg.Server.Origin {
+			continue
+		}
+		if info, err := llamaserver.Probe(ctx, s.serverHTTP(), entry.Origin); err == nil {
+			return foundServer{origin: entry.Origin, label: serverName(entry.Label, entry.Origin), info: info, fellBack: true}, nil
+		}
+	}
+	return foundServer{}, firstErr
+}
+
+func serverName(label, origin string) string {
+	if label != "" {
+		return label
+	}
+	return origin
 }
 
 func (s *Services) serverHTTP() *http.Client {
@@ -507,8 +545,17 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 		if cfg.Server.Origin == "" {
 			return errors.New("no server is selected")
 		}
-		if _, err := llamaserver.Probe(ctx, s.serverHTTP(), cfg.Server.Origin); err != nil {
-			return fmt.Errorf("%s: %w", cfg.Server.Label, err)
+		found, err := s.reachableServer(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("%s: %w", serverName(cfg.Server.Label, cfg.Server.Origin), err)
+		}
+		// Another server answered, or the selected one now serves a different
+		// model or window: select what is actually there, so the bridge route
+		// names the served model instead of the one saved at selection time.
+		if found.fellBack || found.info.Model != cfg.Server.Model || found.info.ContextSize != cfg.Server.ContextSize {
+			if _, err := s.SelectServer(ctx, found.origin); err != nil {
+				return err
+			}
 		}
 		s.mu.Lock()
 		restart := s.serverChanged

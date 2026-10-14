@@ -313,6 +313,68 @@ func TestSelectServerProbesWritesTheRouteAndPersists(t *testing.T) {
 	}
 }
 
+// The GPU box runs llama.cpp or vLLM, not both: when the selected server is
+// offline another configured server that answers is used, under the model it
+// actually serves, and only no answer at all is "unreachable".
+func TestServerRouteFallsBackToAnotherConfiguredServerAndItsServedModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	paths := platform.DefaultPaths(home)
+	store := config.Store{Path: paths.ConfigFile(), Home: home}
+	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"some-vllm-name","max_model_len":131072}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound) // no /props: not llama.cpp
+		}
+	}))
+	defer vllm.Close()
+	offline := "http://127.0.0.1:1"
+	cfg := config.Default(home)
+	cfg.Mode = "server"
+	cfg.MoonBridge.Config = filepath.Join(home, "moonbridge.yml")
+	cfg.Server = config.Server{Label: "llama", Origin: offline, Model: "arkey-local", ContextSize: 262144}
+	cfg.Servers = []config.ServerEntry{{Label: "llama", Origin: offline}, {Label: "vLLM", Origin: vllm.URL}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"arkey-server-llama"}]}`))
+	}))
+	defer bridge.Close()
+	s := &Services{Paths: paths, Store: store, CodexBinary: "/bin/true", Workspace: home,
+		BridgeClient: moonbridge.Client{BaseURL: bridge.URL}, ServerHTTP: vllm.Client(), config: cfg}
+
+	found, err := s.reachableServer(context.Background(), cfg)
+	if err != nil || !found.fellBack || found.origin != vllm.URL || found.info.Model != "some-vllm-name" {
+		t.Fatalf("found = %#v, %v", found, err)
+	}
+	status, err := s.Refresh(context.Background())
+	if err != nil || status.Runtime != "server reachable via vLLM (llama offline)" {
+		t.Fatalf("runtime = %q, %v", status.Runtime, err)
+	}
+	// what PrepareLaunch does with the fallback: select it, so the route names the served model
+	if _, err := s.SelectServer(context.Background(), found.origin); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.snapshot().Server; got.Origin != vllm.URL || got.Model != "some-vllm-name" || got.ContextSize != 131072 {
+		t.Fatalf("server = %#v", got)
+	}
+	yml, _ := os.ReadFile(cfg.MoonBridge.Config)
+	if !strings.Contains(string(yml), "upstream_name: some-vllm-name") {
+		t.Fatalf("MoonBridge config:\n%s", yml)
+	}
+	// nothing answers: unreachable
+	s.config.Server.Origin, s.config.Servers = offline, []config.ServerEntry{{Label: "llama", Origin: offline}}
+	if status, _ = s.Refresh(context.Background()); status.Runtime != "server unreachable" {
+		t.Fatalf("runtime = %q", status.Runtime)
+	}
+}
+
 func TestLocalRuntimeDescriptorUsesCentralConfigWithoutChangingSelectedRoute(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default(home)

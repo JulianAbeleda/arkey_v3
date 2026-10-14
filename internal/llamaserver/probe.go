@@ -1,6 +1,6 @@
-// Package llamaserver asks a llama.cpp server what it is: healthy, which
-// model it serves, and how much context that model has. Arkey's server route
-// runs on these answers rather than on typed numbers.
+// Package llamaserver asks an OpenAI-compatible server (llama.cpp, vLLM) what it
+// is: healthy, which model it serves, and how much context that model has.
+// Arkey's server route runs on these answers rather than on typed numbers.
 package llamaserver
 
 import (
@@ -21,8 +21,10 @@ type Info struct {
 
 const bodyLimit = 1 << 20
 
-// Probe checks /health, reads the first served model from /v1/models, and
-// the per-slot context from /props. Any missing answer is an error.
+// Probe checks /health and reads the first served model from /v1/models. The
+// context comes from llama.cpp's /props (per slot) or, for a server without
+// /props such as vLLM, from the model's max_model_len in /v1/models. A server
+// that answers neither has no known context, which is an error.
 func Probe(ctx context.Context, client *http.Client, origin string) (Info, error) {
 	origin = strings.TrimRight(origin, "/")
 	if client == nil {
@@ -35,7 +37,8 @@ func Probe(ctx context.Context, client *http.Client, origin string) (Info, error
 	}
 	var models struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			MaxModelLen int    `json:"max_model_len"`
 		} `json:"data"`
 	}
 	if err := getJSON(ctx, client, origin+"/v1/models", &models); err != nil {
@@ -49,13 +52,21 @@ func Probe(ctx context.Context, client *http.Client, origin string) (Info, error
 			ContextSize int `json:"n_ctx"`
 		} `json:"default_generation_settings"`
 	}
-	if err := getJSON(ctx, client, origin+"/props", &props); err != nil {
-		return Info{}, fmt.Errorf("server props: %w", err)
+	contextSize := 0
+	propsErr := getJSON(ctx, client, origin+"/props", &props)
+	if propsErr == nil {
+		contextSize = props.Defaults.ContextSize
 	}
-	if props.Defaults.ContextSize <= 0 {
+	if contextSize <= 0 {
+		contextSize = models.Data[0].MaxModelLen
+	}
+	if contextSize <= 0 {
+		if propsErr != nil {
+			return Info{}, fmt.Errorf("server reports no context size (no /props: %v, no max_model_len)", propsErr)
+		}
 		return Info{}, errors.New("server reports no context size")
 	}
-	return Info{Model: models.Data[0].ID, ContextSize: props.Defaults.ContextSize}, nil
+	return Info{Model: models.Data[0].ID, ContextSize: contextSize}, nil
 }
 
 func get(ctx context.Context, client *http.Client, url string) (int, []byte, error) {
