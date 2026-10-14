@@ -1,5 +1,7 @@
 # vLLM connection smoke — 2026-10-14
 
+Historical connection-only smoke. The [managed lifecycle refactor](local-engine-lifecycle-20261014.md) supersedes its startup/unload limitations.
+
 Arkey v3 now exposes Config → Local → vLLM. This connects to a separately managed
 loopback server; it does not start or stop model processes. llama.cpp retains its
 existing managed lifecycle and saved GGUF selection. Stop the external vLLM server

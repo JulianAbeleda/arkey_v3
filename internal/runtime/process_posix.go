@@ -101,7 +101,7 @@ func (DirectLauncher) Terminate(ctx context.Context, pid int) error {
 
 type HTTPHealth struct{ Client *http.Client }
 
-func (h HTTPHealth) LlamaHealthy(ctx context.Context, port int) (bool, error) {
+func (h HTTPHealth) Healthy(ctx context.Context, port int) (bool, error) {
 	cl := h.Client
 	if cl == nil {
 		cl = &http.Client{Timeout: time.Second}

@@ -116,8 +116,8 @@ func run(args []string) int {
 		plan, err = codex.Build(codex.BuildOptions{
 			Parsed: parsed, Model: model, Binary: services.ClientBinary(selectedClient),
 			CodexHome: stateHome, Environment: os.Environ(),
-			ContextWindow: services.ClientContextWindow(), MaxOutputTokens: services.ClientMaxOutputTokens(),
-			ReasoningEffort: services.ClientReasoningEffort(),
+			ContextWindow: services.ClientContextWindowFor(model), MaxOutputTokens: services.ClientMaxOutputTokensFor(model),
+			ReasoningEffort: services.ClientReasoningEffortFor(model),
 		})
 	}
 	if err != nil {
@@ -136,13 +136,13 @@ func run(args []string) int {
 	}
 	if selectedClient == client.Crush {
 		if err = crush.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model,
-			services.ClientContextWindow(), services.ClientMaxOutputTokens()); err != nil {
+			services.ClientContextWindowFor(model), services.ClientMaxOutputTokensFor(model)); err != nil {
 			fmt.Fprintln(os.Stderr, "Arkey Crush configuration:", err)
 			return 1
 		}
 	}
 	if selectedClient == client.Kimi {
-		if err = kimi.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model, services.ClientContextWindow()); err != nil {
+		if err = kimi.WriteConfig(stateHome, services.MoonBridgeURL(), os.Getenv("ARKEY_MOONBRIDGE_TOKEN"), model, services.ClientContextWindowFor(model)); err != nil {
 			fmt.Fprintln(os.Stderr, "Arkey Kimi configuration:", err)
 			return 1
 		}

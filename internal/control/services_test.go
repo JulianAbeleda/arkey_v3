@@ -223,3 +223,19 @@ func TestNewHonorsLegacyEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("runtime overrides not honored: binary=%q candidates=%#v", services.CodexBinary, services.CandidateServers)
 	}
 }
+
+func TestGPUScanDoesNotRequireLlamaForVLLM(t *testing.T) {
+	home := t.TempDir()
+	paths := platform.DefaultPaths(home)
+	cfg := config.Default(home)
+	device := filepath.Join(home, "nvidiactl")
+	os.WriteFile(device, []byte("fixture"), 0600)
+	s := &Services{Paths: paths, Store: config.Store{Path: paths.ConfigFile(), Home: home}, config: cfg, Detector: gpu.Detector{Runner: scanRunner{}, NVIDIAControl: device}, GPUInspector: scanInspector{}}
+	status, err := s.ScanGPU(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.snapshot().Hardware.Vendor != "nvidia" || s.snapshot().Local.LlamaServer != "" || status.GPU == "not scanned" {
+		t.Fatalf("GPU scan depends on llama: %+v", status)
+	}
+}

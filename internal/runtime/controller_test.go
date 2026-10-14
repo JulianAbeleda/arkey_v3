@@ -86,7 +86,7 @@ func (f *fakeLaunch) Terminate(_ context.Context, p int) error {
 
 type fakeHealth struct{ answers []bool }
 
-func (f *fakeHealth) LlamaHealthy(context.Context, int) (bool, error) {
+func (f *fakeHealth) Healthy(context.Context, int) (bool, error) {
 	if len(f.answers) == 0 {
 		return false, nil
 	}

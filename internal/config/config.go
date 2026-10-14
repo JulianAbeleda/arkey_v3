@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -30,6 +30,13 @@ type Frontier struct {
 	Backend string `toml:"backend"`
 }
 type Local struct {
+	VLLMPython      string            `toml:"vllm_python"`
+	VLLMCheckpoint  string            `toml:"vllm_checkpoint"`
+	VLLMModelDirs   []string          `toml:"vllm_model_dirs"`
+	VLLMEnvironment map[string]string `toml:"vllm_environment"`
+	VLLMArgs        []string          `toml:"vllm_args"`
+	VLLMMemoryMiB   int               `toml:"vllm_memory_mib"`
+
 	VLLMReasoningEffort string `toml:"vllm_reasoning_effort"`
 	VLLMURL             string `toml:"vllm_url"`
 	VLLMModel           string `toml:"vllm_model"`
@@ -54,7 +61,7 @@ type UI struct {
 
 func Default(home string) Config {
 	d := filepath.Join(home, ".config", "arkey")
-	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 32768, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
+	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMPython: "python3", VLLMModelDirs: []string{filepath.Join(home, "models")}, VLLMMemoryMiB: 24576, VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 32768, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {
@@ -76,9 +83,19 @@ func (c Config) Validate() error {
 	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return errors.New("vllm_url must be a local HTTP server root, without /v1")
 	}
-	ip := net.ParseIP(u.Hostname())
-	if u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return errors.New("vllm_url must use a loopback host")
+	if u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+		return errors.New("vllm_url must use localhost or 127.0.0.1")
+	}
+	if p := VLLMPort(c.Local.VLLMURL); p < 1 || p > 65535 {
+		return errors.New("invalid vLLM port")
+	}
+	if c.Local.VLLMMemoryMiB < 1024 || c.Local.VLLMPython == "" {
+		return errors.New("vLLM requires a Python executable and a host memory cap of at least 1024 MiB")
+	}
+	for key, value := range c.Local.VLLMEnvironment {
+		if strings.ContainsAny(key, "=\x00\n") || key == "" || strings.ContainsRune(value, '\x00') {
+			return errors.New("invalid vLLM environment")
+		}
 	}
 	if c.Local.VLLMModel == "" || c.Local.VLLMContextSize < 4096 {
 		return errors.New("vLLM requires a served model name and context size of at least 4096")
@@ -120,4 +137,19 @@ func Decode(b []byte, home string) (Config, error) {
 		return c, err
 	}
 	return c, c.Validate()
+}
+
+func VLLMPort(endpoint string) int {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return 0
+	}
+	if u.Port() == "" {
+		return 80
+	}
+	p, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return 0
+	}
+	return p
 }

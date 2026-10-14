@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,6 +24,13 @@ import (
 
 const moonbridgeLocalRoute = "arkey-local-llama"
 
+// LocalRuntime is the shared lifecycle boundary for every local engine.
+type LocalRuntime interface {
+	Start(context.Context, arkeyruntime.Config) (arkeyruntime.State, error, error)
+	Loaded(context.Context, arkeyruntime.Config) (string, bool, error)
+	Stop(context.Context) error
+}
+
 type Services struct {
 	Paths            platform.Paths
 	Store            config.Store
@@ -31,7 +39,7 @@ type Services struct {
 	GPUInspector     gpu.Inspector
 	BridgeClient     moonbridge.Client
 	Bridge           *BridgeManager
-	Runtime          *arkeyruntime.Controller
+	Runtime          LocalRuntime
 	MoonBridgeBinary string
 	CodexBinary      string
 	ClaudeBinary     string
@@ -108,6 +116,16 @@ func New(home, workspace string) (*Services, error) {
 		MoonBridge: bridge, Backend: libraryBackend(runner),
 		Lock: arkeyruntime.FileLock{Path: filepath.Join(paths.LocalStateDir(), "operation.lock")},
 	}
+	memoryCap := uint64(cfg.Local.VLLMMemoryMiB) * 1024 * 1024
+	runtimeController.Engines = map[string]arkeyruntime.Engine{"vllm": {
+		Validate: arkeyruntime.ValidateVLLM, Args: arkeyruntime.VLLMArgs,
+		Backend: arkeyruntime.VLLMBackend{Runner: runner},
+		Service: arkeyruntime.BoundedService{Runner: runner, MemoryBytes: memoryCap},
+		Health: func(c arkeyruntime.Config) arkeyruntime.Health {
+			return arkeyruntime.VLLMHealth{Model: c.ServedModel, ContextSize: c.ContextSize}
+		},
+		Unit: "arkey-vllm", Route: "arkey-local-vllm", RequireService: true,
+	}}
 	if err := migrateLegacyRuntime(context.Background(), paths, cfg, runner, inspector, runtimeController.Store); err != nil {
 		return nil, fmt.Errorf("migrate legacy local runtime: %w", err)
 	}
@@ -148,21 +166,16 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
 	if cfg.Local.Runtime == "vllm" {
-		status.Route.LocalModel = cfg.Local.VLLMModel
-		if err := s.checkVLLM(ctx, cfg); err == nil {
-			status.LocalLoaded = true
-			status.LoadedModel = cfg.Local.VLLMModel
-			status.Runtime = "vLLM connected"
-		} else {
-			status.Runtime = "vLLM unavailable"
-		}
-	} else if cfg.Local.Model != "" {
-		loadedModel, ready, err := s.Runtime.Loaded(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg)))
+		status.Route.LocalModel = cfg.Local.VLLMCheckpoint
+	}
+	launchCfg := s.runtimeConfig(ctx, cfg)
+	if launchCfg.Model != "" {
+		loadedModel, ready, err := s.Runtime.Loaded(ctx, launchCfg)
 		if err == nil && loadedModel != "" {
 			status.LocalActive = true
 			status.LoadedModel = loadedModel
+			status.LocalLoaded = ready
 			if ready {
-				status.LocalLoaded = true
 				status.Runtime = "local loaded"
 			} else {
 				status.Runtime = "local starting"
@@ -171,6 +184,7 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 			status.Runtime = "local stopped"
 		}
 	}
+
 	return status, nil
 }
 
@@ -204,17 +218,18 @@ func (s *Services) ValidateClient(client string) error {
 // UnloadLocal releases the active model from memory without forgetting the
 // selection. The next Arkey Codex launch can load the same model again.
 func (s *Services) UnloadLocal(ctx context.Context) (app.Status, error) {
-	if s.snapshot().Local.Runtime == "vllm" {
-		return app.Status{}, errors.New("vLLM is externally managed; stop it using its server manager")
-	}
 	if err := s.Runtime.Stop(ctx); err != nil {
 		return app.Status{}, fmt.Errorf("unload local model: %w", err)
 	}
 	return s.Refresh(ctx)
 }
 
-func (s *Services) DiscoverModels(ctx context.Context) ([]app.ModelSummary, error) {
-	discovery, err := models.Discover(ctx, []string{s.Paths.ModelDir})
+func (s *Services) DiscoverModels(ctx context.Context, runtimeName string) ([]app.ModelSummary, error) {
+	roots := []string{s.Paths.ModelDir}
+	if runtimeName == "vllm" {
+		roots = s.snapshot().Local.VLLMModelDirs
+	}
+	discovery, err := models.DiscoverFor(ctx, roots, runtimeName)
 	if err != nil {
 		return nil, err
 	}
@@ -243,10 +258,7 @@ func (s *Services) SelectFrontier(ctx context.Context, backend string) (app.Stat
 }
 
 func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model app.ModelSummary) (app.Status, error) {
-	if runtimeName == "vllm" {
-		return s.activateVLLM(ctx)
-	}
-	if runtimeName != "llama" {
+	if runtimeName != "llama" && runtimeName != "vllm" {
 		return app.Status{}, errors.New("tinygrad local serving is in development; use llama.cpp")
 	}
 	canonical, err := filepath.EvalSymlinks(model.Path)
@@ -254,18 +266,31 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 		return app.Status{}, fmt.Errorf("local model: %w", err)
 	}
 	cfg := s.snapshot()
-	cfg.Local.Model = canonical
-	cfg.Local.Runtime = "llama"
-	if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
+	cfg.Local.Runtime = runtimeName
+	if runtimeName == "vllm" {
+		cfg.Local.VLLMCheckpoint = canonical
+	} else {
+		cfg.Local.Model = canonical
+	}
+	if _, rollback, err := s.Runtime.Start(ctx, s.runtimeConfig(ctx, cfg)); err != nil {
 		if rollback != nil {
 			return app.Status{}, fmt.Errorf("load failed: %w; previous-model rollback failed: %v", err, rollback)
 		}
 		return app.Status{}, err
 	}
+	if runtimeName == "vllm" && regularFile(s.ModelCatalog) {
+		if err := s.updateLocalCatalog(ctx); err != nil {
+			return app.Status{}, err
+		}
+	}
 	if err := s.updateConfig(func(current *config.Config) {
 		current.Mode = "local"
-		current.Local.Runtime = "llama"
-		current.Local.Model = canonical
+		current.Local.Runtime = runtimeName
+		if runtimeName == "vllm" {
+			current.Local.VLLMCheckpoint = canonical
+		} else {
+			current.Local.Model = canonical
+		}
 	}); err != nil {
 		return app.Status{}, err
 	}
@@ -300,15 +325,23 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 	} else {
 		server, err = gpu.FindAligned(ctx, detected.Vendor, candidates, s.GPUInspector)
 	}
-	if err != nil {
-		return app.Status{}, fmt.Errorf("no %s-enabled llama-server was found", detected.Vendor)
+	if ctx.Err() != nil {
+		return app.Status{}, ctx.Err()
 	}
-	server, err = filepath.EvalSymlinks(server)
+	// GPU detection must also work on vLLM-only installations.
 	if err != nil {
-		return app.Status{}, err
+		server = ""
 	}
-	if err := s.updateLocalCatalog(ctx); err != nil {
-		return app.Status{}, err
+	if server != "" {
+		server, err = filepath.EvalSymlinks(server)
+		if err != nil {
+			return app.Status{}, err
+		}
+	}
+	if regularFile(s.ModelCatalog) {
+		if err := s.updateLocalCatalog(ctx); err != nil {
+			return app.Status{}, err
+		}
 	}
 	if err = s.updateConfig(func(cfg *config.Config) {
 		cfg.Hardware.Vendor = string(detected.Vendor)
@@ -322,17 +355,13 @@ func (s *Services) ScanGPU(ctx context.Context) (app.Status, error) {
 
 func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 	cfg := s.snapshot()
-	if model == "arkey-local-vllm" {
-		if err := s.checkVLLM(ctx, cfg); err != nil {
-			return err
+	if model == "arkey-local-vllm" || model == moonbridgeLocalRoute {
+		cfg.Local.Runtime = strings.TrimPrefix(model, "arkey-local-")
+		launchCfg := s.runtimeConfig(ctx, cfg)
+		if launchCfg.Model == "" {
+			return errors.New("no local model is selected; open Config → Local first")
 		}
-		return s.Bridge.EnsureRoute(ctx, model)
-	}
-	if model == moonbridgeLocalRoute || cfg.Mode == "local" && model == selectedModel(cfg) {
-		if cfg.Local.Model == "" {
-			return errors.New("no local GGUF is selected")
-		}
-		if _, rollback, err := s.Runtime.Start(ctx, runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))); err != nil {
+		if _, rollback, err := s.Runtime.Start(ctx, launchCfg); err != nil {
 			if rollback != nil {
 				return fmt.Errorf("local startup failed: %w; rollback failed: %v", err, rollback)
 			}
@@ -340,6 +369,7 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 		}
 		return nil
 	}
+
 	if err := s.Bridge.EnsureRoute(ctx, model); err != nil {
 		return err
 	}
@@ -384,8 +414,9 @@ func (s *Services) MoonBridgeURL() string {
 // ClientContextWindow reports the window the client should plan against. On the
 // local route this must be the window llama-server is actually given, derived
 // the same way, or the client compacts against a budget that does not exist.
-func (s *Services) ClientContextWindow() int {
-	cfg := s.snapshot()
+func (s *Services) ClientContextWindow() int { return s.ClientContextWindowFor(s.SelectedModel()) }
+func (s *Services) ClientContextWindowFor(model string) int {
+	cfg := s.configForRoute(model)
 	if cfg.Mode == "local" {
 		if cfg.Local.Runtime == "vllm" {
 			return cfg.Local.VLLMContextSize
@@ -400,8 +431,9 @@ func (s *Services) ClientContextWindow() int {
 // ClientMaxOutputTokens derives a max-output budget from ClientContextWindow: a
 // max-output larger than the context window is incoherent and causes the client
 // to plan against a budget that cannot exist.
-func (s *Services) ClientMaxOutputTokens() int {
-	tokens := s.ClientContextWindow() / 4
+func (s *Services) ClientMaxOutputTokens() int { return s.ClientMaxOutputTokensFor(s.SelectedModel()) }
+func (s *Services) ClientMaxOutputTokensFor(model string) int {
+	tokens := s.ClientContextWindowFor(model) / 4
 	if tokens < 4096 {
 		return 4096
 	}
@@ -445,12 +477,15 @@ func (s *Services) updateConfig(change func(*config.Config)) error {
 }
 
 func (s *Services) gpuSummary(ctx context.Context, cfg config.Config) string {
-	if cfg.Hardware.Vendor == "unknown" || cfg.Local.LlamaServer == "" {
+	if cfg.Hardware.Vendor == "unknown" {
 		return "not scanned"
 	}
 	detected, err := s.Detector.Detect(ctx)
 	if err != nil || string(detected.Vendor) != cfg.Hardware.Vendor {
 		return "rescan required"
+	}
+	if cfg.Local.LlamaServer == "" {
+		return cfg.Hardware.Name + " · detected"
 	}
 	backend, err := s.GPUInspector.Backend(ctx, cfg.Local.LlamaServer)
 	if err != nil || string(backend) != cfg.Hardware.Vendor {
@@ -602,4 +637,28 @@ func (s *Services) updateLocalCatalog(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Services) runtimeConfig(ctx context.Context, cfg config.Config) arkeyruntime.Config {
+	if cfg.Local.Runtime != "vllm" {
+		return runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))
+	}
+	python := cfg.Local.VLLMPython
+	if resolved, err := exec.LookPath(python); err == nil {
+		python = resolved
+	}
+	return arkeyruntime.Config{Engine: "vllm", Server: python, Model: cfg.Local.VLLMCheckpoint, Vendor: cfg.Hardware.Vendor,
+		Port: config.VLLMPort(cfg.Local.VLLMURL), ContextSize: cfg.Local.VLLMContextSize, LogPath: filepath.Join(s.Paths.LogsDir(), "vllm.log"),
+		ServedModel: cfg.Local.VLLMModel, Environment: cfg.Local.VLLMEnvironment, ExtraArgs: cfg.Local.VLLMArgs}
+}
+
+func (s *Services) configForRoute(model string) config.Config {
+	cfg := s.snapshot()
+	if model == "arkey-local-vllm" || model == moonbridgeLocalRoute {
+		cfg.Mode = "local"
+		cfg.Local.Runtime = strings.TrimPrefix(model, "arkey-local-")
+	} else {
+		cfg.Mode = "frontier"
+	}
+	return cfg
 }

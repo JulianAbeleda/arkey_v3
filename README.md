@@ -39,7 +39,9 @@ TUI
 Config
   Local
     tinygrad     (in development; unavailable)
-    vLLM        (connect to a separately managed local server)
+    vLLM
+      installed Hugging Face checkpoints
+      Enter loads · r refreshes · d unloads the active model
     llama.cpp
       installed GGUF models
       Enter loads · r refreshes · d unloads the active model
@@ -110,40 +112,66 @@ scripts/install.sh --check
 go test ./...
 ```
 
-## Local vLLM
+## Local engines
 
-Config → Local → vLLM selects an already running loopback vLLM server. Arkey checks
-`/v1/models` for the configured served model and verifies the advertised context limit
-before saving the selection; launch checks it again. It does not start or stop vLLM.
-The llama.cpp selection is retained separately so you can switch back.
+Config → Local → llama.cpp or vLLM opens that engine's installed-model list.
+Enter loads the model, `r` refreshes discovery and `d` unloads the highlighted active
+model. Launching a client starts the saved model if it is stopped. One shared controller
+handles ownership, health, stop/start, cancellation and rollback. Switching engines
+releases the old model before starting the new one; a failed start attempts to restore
+the old engine and its exact saved launch configuration. Unmanaged servers are refused.
+
+Engine adapters supply model validation, launch arguments, GPU checks, health probes and
+service policy. llama.cpp discovers GGUF files and retains its existing GPU alignment and
+context sizing. vLLM discovers local Hugging Face directories containing `config.json`
+and safetensors weights. vLLM reads quantization from checkpoint metadata, so AWQ and
+NVFP4 use the same model-selection flow.
+
+### vLLM configuration
 
 Configure these fields under `[local]` in `~/.config/arkey/config.toml`:
 
 ```toml
+vllm_python = "/path/to/vllm-venv/bin/python"
+vllm_model_dirs = ["/path/to/checkpoints"]
 vllm_url = "http://127.0.0.1:8000"
-vllm_model = "arkey-local-vllm"
+vllm_model = "arkey-local-vllm" # served API name, not a checkpoint path
 vllm_context_size = 32768
 vllm_reasoning_effort = "medium"
+vllm_memory_mib = 24576
+vllm_args = []
+vllm_environment = {} # optional CUDA/cache/build-guard environment
 ```
 
-Use a server root without `/v1`, and a context limit no larger than the server's
-`--max-model-len`. Configure the `arkey-local-vllm` route, `vllm-local` provider,
-and `arkey-vllm` model from `dependencies/moonbridge.example.yml` in your MoonBridge
-configuration. Its URL, upstream name and context limit must match the Arkey settings.
-An already running bridge must load the updated configuration before selection succeeds.
+The UI saves the chosen directory as `vllm_checkpoint`; the previous GGUF selection
+remains in `model`. The Python environment must already contain a compatible vLLM and
+GPU stack. Arkey does not install packages or download models while loading.
 
-For Qwen3.8 AWQ, the smoke used vLLM's `--served-model-name arkey-local-vllm`,
-`--enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3`,
-and `--default-chat-template-kwargs '{"enable_thinking":false}'`. Tool/reasoning parsers
-are model-specific; use the appropriate ones for other checkpoints. Keep model serving
-under your normal memory limits and prebuild guards. A working catalog is only a
-connection check; validate generation and tool calling for the chosen checkpoint.
+Managed vLLM currently requires Linux systemd and noninteractive access to
+`sudo -n systemctl` / `sudo -n systemd-run`. It runs as the current user in a separate
+system slice, with a hard memory cap, swap disabled, whole-group cleanup and no automatic
+restart loop. The cap is clamped to 75% of physical RAM and available RAM minus 2 GiB.
+It never falls back to an unbounded launch. `MAX_JOBS` and `NINJA_NUM_JOBS` default to 1;
+configure the normal prebuilt-helper guard and cache environment when using a guarded
+vLLM installation. These settings are machine-local, not copied from a benchmark path.
 
-The Codex launch uses `vllm_reasoning_effort` for this route (an explicit client CLI
-override still wins). Qwen3.8 accepts low, medium and xhigh, but rejects high; adjust
-this setting for another model, or use an empty string to retain client defaults.
-The pinned MoonBridge build includes `dependencies/moonbridge-local-output-budget.patch`:
-for local routes, an omitted output limit uses the smaller of the global default and
-the route's declared output limit. Explicit request limits and hosted defaults are unchanged.
+Use a localhost/127.0.0.1 server root without `/v1`. The health check verifies the served
+model and context limit. Configure the `arkey-local-vllm` route, `vllm-local` provider,
+and `arkey-vllm` model from `dependencies/moonbridge.example.yml` in MoonBridge. Its
+address, upstream name and limits must match these settings. Reload a running bridge
+when changing its configuration.
 
-[Smoke results and limitations](docs/vllm-smoke-20261014.md).
+Qwen3.5/3.8-family checkpoints receive the Qwen tool/reasoning parsers and thinking-off
+chat-template default automatically, based on `config.json`, independent of quantization.
+Other model families may need explicit `vllm_args`. Explicit parser arguments override
+family defaults; model, address, served name and context flags remain owned by Arkey.
+
+Codex uses `vllm_reasoning_effort` for this route; an explicit client CLI override wins.
+Qwen3.8 accepts low, medium and xhigh, but rejects high. Adjust for another model or use
+an empty string to retain client defaults. The pinned MoonBridge build includes
+`dependencies/moonbridge-local-output-budget.patch`: for local routes, an omitted output
+limit uses the smaller of the global default and the route's declared limit. Explicit
+limits and hosted defaults are unchanged.
+
+[Initial connection smoke and client limitation](docs/vllm-smoke-20261014.md).
+[Managed loading, switching and refactor](docs/local-engine-lifecycle-20261014.md).

@@ -1,4 +1,4 @@
-// Package runtime manages the machine-local llama.cpp service.  It deliberately
+// Package runtime manages the machine-local inference services.  It deliberately
 // contains no terminal output; callers translate its typed errors into UI state.
 package runtime
 
@@ -6,9 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,13 +18,17 @@ import (
 
 var (
 	ErrInvalidModel  = errors.New("runtime: model must be a .gguf file")
-	ErrUnaligned     = errors.New("runtime: llama server is not aligned to the GPU")
+	ErrUnaligned     = errors.New("runtime: server is not aligned to the GPU")
 	ErrUnmanagedPort = errors.New("runtime: configured port is owned by an unmanaged process")
-	ErrHealth        = errors.New("runtime: llama server did not become healthy")
+	ErrHealth        = errors.New("runtime: server did not become healthy")
 	ErrAcceleration  = errors.New("runtime: expected GPU acceleration was not initialized")
 )
 
 type Config struct {
+	Engine                string            `json:"engine,omitempty"`
+	Environment           map[string]string `json:"environment,omitempty"`
+	ExtraArgs             []string          `json:"extra_args,omitempty"`
+	ServedModel           string            `json:"served_model,omitempty"`
 	Server, Model, Vendor string
 	Port, ContextSize     int
 	LogPath               string
@@ -33,33 +38,21 @@ type Config struct {
 	ChatTemplate string
 }
 
-func (c Config) validate() error {
-	if !strings.HasSuffix(strings.ToLower(c.Model), ".gguf") || c.Model == "" {
-		return ErrInvalidModel
-	}
-	if c.Server == "" || c.LogPath == "" || c.Port < 1 || c.Port > 65535 || c.ContextSize < 1 {
-		return fmt.Errorf("runtime: invalid configuration")
-	}
-	if c.Vendor != "nvidia" && c.Vendor != "amd" {
-		return fmt.Errorf("runtime: unsupported GPU vendor %q", c.Vendor)
-	}
-	return nil
-}
-
 // State is persisted only after a complete successful start. StartTime prevents
 // a reused Linux PID from being mistaken for an Arkey-owned process.
 type State struct {
-	PID             int    `json:"pid"`
-	Executable      string `json:"executable"`
-	ArgsFingerprint string `json:"args_fingerprint"`
-	Model           string `json:"model"`
-	Port            int    `json:"port"`
-	StartTime       uint64 `json:"start_time"`
-	Server          string `json:"server"`
-	Vendor          string `json:"vendor"`
-	LogPath         string `json:"log_path"`
-	ContextSize     int    `json:"context_size"`
-	Manager         string `json:"manager"`
+	LaunchConfig    *Config `json:"launch_config,omitempty"`
+	PID             int     `json:"pid"`
+	Executable      string  `json:"executable"`
+	ArgsFingerprint string  `json:"args_fingerprint"`
+	Model           string  `json:"model"`
+	Port            int     `json:"port"`
+	StartTime       uint64  `json:"start_time"`
+	Server          string  `json:"server"`
+	Vendor          string  `json:"vendor"`
+	LogPath         string  `json:"log_path"`
+	ContextSize     int     `json:"context_size"`
+	Manager         string  `json:"manager"`
 }
 type Store interface {
 	Load(context.Context) (State, error)
@@ -96,7 +89,7 @@ type LlamaInspector interface {
 	LlamaProcess(context.Context, int, string, int) (Process, string, error)
 }
 type Health interface {
-	LlamaHealthy(context.Context, int) (bool, error)
+	Healthy(context.Context, int) (bool, error)
 }
 type MoonBridge interface{ EnsureLocalRoute(context.Context) error }
 type Backend interface {
@@ -110,41 +103,91 @@ type Clock interface {
 	After(time.Duration) <-chan time.Time
 }
 
+// Engine supplies the parts of lifecycle management that differ by backend.
+type Engine struct {
+	Validate       func(Config) error
+	Args           func(Config) []string
+	Backend        Backend
+	Service        Service
+	Health         func(Config) Health
+	Unit, Route    string
+	RequireService bool
+	Recognize      func(context.Context, Inspector, int, State) (Process, string, error)
+}
+
+type ConfiguredService interface {
+	StartConfigured(context.Context, string, []string, string, map[string]string) (int, error)
+}
+
 type Controller struct {
-	Store      Store
-	Inspector  Inspector
-	Launcher   Launcher
-	Service    Service
-	Health     Health
-	MoonBridge MoonBridge
-	Backend    Backend
-	Lock       Lock
-	Clock      Clock
-	Unit       string
-	Attempts   int
-	Interval   time.Duration
-	mu         sync.Mutex
+	Engines map[string]Engine
+
+	Store        Store
+	Inspector    Inspector
+	Launcher     Launcher
+	Service      Service
+	Health       Health
+	MoonBridge   MoonBridge
+	Backend      Backend
+	Lock         Lock
+	Clock        Clock
+	Unit         string
+	Attempts     int
+	Interval     time.Duration
+	mu           sync.Mutex
+	defaultsOnce sync.Once
+}
+
+func (c *Controller) engine(name string) Engine {
+	if name != "" && name != "llama" {
+		return c.Engines[name]
+	}
+	return Engine{Validate: Config.validate, Args: llamaArgs, Backend: c.Backend, Service: c.Service, Health: func(Config) Health { return c.Health }, Unit: c.Unit, Recognize: recognizeLlama}
+}
+func stateEngine(s State) string {
+	if s.LaunchConfig != nil {
+		return s.LaunchConfig.Engine
+	}
+	return ""
+}
+func (c *Controller) ensureRoute(ctx context.Context, e Engine) error {
+	if e.Route != "" {
+		bridge, ok := c.MoonBridge.(interface {
+			EnsureRoute(context.Context, string) error
+		})
+		if !ok {
+			return errors.New("runtime: bridge does not support engine routes")
+		}
+		return bridge.EnsureRoute(ctx, e.Route)
+	}
+	return c.MoonBridge.EnsureLocalRoute(ctx)
 }
 
 func (c *Controller) defaults() {
-	if c.Unit == "" {
-		c.Unit = "arkey-llama"
-	}
-	if c.Attempts == 0 {
-		c.Attempts = 600
-	}
-	if c.Interval == 0 {
-		c.Interval = 500 * time.Millisecond
-	}
-	if c.Clock == nil {
-		c.Clock = realClock{}
-	}
+	c.defaultsOnce.Do(func() {
+		if c.Unit == "" {
+			c.Unit = "arkey-llama"
+		}
+		if c.Attempts == 0 {
+			c.Attempts = 600
+		}
+		if c.Interval == 0 {
+			c.Interval = 500 * time.Millisecond
+		}
+		if c.Clock == nil {
+			c.Clock = realClock{}
+		}
+	})
 }
 func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollback error, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.defaults()
-	if err = cfg.validate(); err != nil {
+	engine := c.engine(cfg.Engine)
+	if engine.Validate == nil || engine.Args == nil || engine.Backend == nil || engine.Health == nil {
+		return State{}, nil, fmt.Errorf("runtime: unknown engine %q", cfg.Engine)
+	}
+	if err = engine.Validate(cfg); err != nil {
 		return State{}, nil, err
 	}
 	if c.Lock == nil {
@@ -155,13 +198,16 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 		return State{}, nil, e
 	}
 	defer unlock()
-	if ok, e := c.Backend.Aligned(ctx, cfg.Server, cfg.Vendor); e != nil || !ok {
+	if engine.RequireService && (engine.Service == nil || !engine.Service.Available(ctx)) {
+		return State{}, nil, errors.New("runtime: required bounded service is unavailable; refusing an uncontained start")
+	}
+	if ok, e := engine.Backend.Aligned(ctx, cfg.Server, cfg.Vendor); e != nil || !ok {
 		if e != nil {
 			return State{}, nil, e
 		}
 		return State{}, nil, ErrUnaligned
 	}
-	if e = c.MoonBridge.EnsureLocalRoute(ctx); e != nil {
+	if e = c.ensureRoute(ctx, engine); e != nil {
 		return State{}, nil, e
 	}
 	previous, loadErr := c.Store.Load(ctx)
@@ -181,7 +227,7 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 	}
 	if owner, e := c.Inspector.PortOwner(ctx, cfg.Port); e != nil {
 		return State{}, nil, e
-	} else if owner > 0 && !c.owns(ctx, previous) {
+	} else if owner > 0 && (!c.owns(ctx, previous) || owner != previous.PID) {
 		return State{}, nil, ErrUnmanagedPort
 	}
 	if previous.PID > 0 {
@@ -191,24 +237,26 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 	}
 	started, e := c.start(ctx, cfg)
 	if e != nil {
-		return State{}, nil, e
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		return State{}, c.restore(cleanupCtx, previous, cfg), e
 	}
-	if e = c.waitHealthy(ctx, cfg.Port); e == nil {
+	if e = c.waitHealthy(ctx, cfg, started); e == nil {
 		var ok bool
-		ok, e = c.Backend.Accelerated(ctx, cfg.LogPath, cfg.Vendor)
+		ok, e = c.engine(cfg.Engine).Backend.Accelerated(ctx, cfg.LogPath, cfg.Vendor)
 		if e == nil && !ok {
 			e = ErrAcceleration
 		}
 	}
 	if e != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
 		_ = c.stopOwned(cleanupCtx, started)
 		rollback = c.restore(cleanupCtx, previous, cfg)
 		return State{}, rollback, e
 	}
 	if e = c.Store.Save(ctx, started); e != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
 		_ = c.stopOwned(cleanupCtx, started)
 		rollback = c.restore(cleanupCtx, previous, cfg)
@@ -238,7 +286,7 @@ func (c *Controller) Loaded(ctx context.Context, cfg Config) (string, bool, erro
 		return "", false, err
 	}
 	if err == nil && c.owns(ctx, s) {
-		ok, healthErr := c.Health.LlamaHealthy(ctx, s.Port)
+		ok, healthErr := c.engine(stateEngine(s)).Health(launchConfigForState(s, cfg)).Healthy(ctx, s.Port)
 		return s.Model, healthErr == nil && ok, nil
 	}
 	base := s
@@ -253,7 +301,7 @@ func (c *Controller) Loaded(ctx context.Context, cfg Config) (string, bool, erro
 	if !recognized {
 		return "", false, nil
 	}
-	ok, healthErr := c.Health.LlamaHealthy(ctx, current.Port)
+	ok, healthErr := c.engine(stateEngine(current)).Health(launchConfigForState(current, cfg)).Healthy(ctx, current.Port)
 	return current.Model, healthErr == nil && ok, nil
 }
 
@@ -283,10 +331,13 @@ func (c *Controller) Stop(ctx context.Context) error {
 // window, so reusing one started with a different --ctx-size would silently
 // leave the client planning against a window the server does not have.
 func (c *Controller) matchesHealthy(ctx context.Context, s State, cfg Config) bool {
+	if stateEngine(s) != cfg.Engine || (s.LaunchConfig != nil && !sameLaunchConfig(*s.LaunchConfig, cfg)) {
+		return false
+	}
 	if s.Model != cfg.Model || s.Port != cfg.Port || s.ContextSize != cfg.ContextSize || !c.owns(ctx, s) {
 		return false
 	}
-	ok, e := c.Health.LlamaHealthy(ctx, cfg.Port)
+	ok, e := c.engine(cfg.Engine).Health(cfg).Healthy(ctx, cfg.Port)
 	return e == nil && ok
 }
 func (c *Controller) owns(ctx context.Context, s State) bool {
@@ -298,17 +349,17 @@ func (c *Controller) owns(ctx context.Context, s State) bool {
 }
 
 func (c *Controller) currentSystemdState(ctx context.Context, base State) (State, bool) {
-	pidService, pidOK := c.Service.(PIDService)
-	llamaInspector, inspectOK := c.Inspector.(LlamaInspector)
-	if base.Manager != "systemd" || !pidOK || !inspectOK || base.Server == "" || base.Port < 1 {
+	engine := c.engine(stateEngine(base))
+	pidService, pidOK := engine.Service.(PIDService)
+	if base.Manager != "systemd" || !pidOK || engine.Recognize == nil || base.Server == "" || base.Port < 1 {
 		return State{}, false
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		pid, err := pidService.MainPID(ctx, c.Unit)
+		pid, err := pidService.MainPID(ctx, engine.Unit)
 		if err != nil || pid < 1 {
 			return State{}, false
 		}
-		process, model, err := llamaInspector.LlamaProcess(ctx, pid, base.Server, base.Port)
+		process, model, err := engine.Recognize(ctx, c.Inspector, pid, base)
 		if err == nil {
 			base.PID = pid
 			base.Executable = process.Executable
@@ -334,14 +385,22 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 	if err = logFile.Close(); err != nil {
 		return State{}, err
 	}
-	args := llamaArgs(cfg)
+	engine := c.engine(cfg.Engine)
+	args := engine.Args(cfg)
 	var pid int
 	var e error
 	manager := "direct"
-	if c.Service != nil && c.Service.Available(ctx) {
-		pid, e = c.Service.Start(ctx, c.Unit, args, cfg.LogPath)
+	if engine.Service != nil && engine.Service.Available(ctx) {
+		if service, ok := engine.Service.(ConfiguredService); ok {
+			pid, e = service.StartConfigured(ctx, engine.Unit, args, cfg.LogPath, cfg.Environment)
+		} else {
+			pid, e = engine.Service.Start(ctx, engine.Unit, args, cfg.LogPath)
+		}
 		manager = "systemd"
 	} else {
+		if engine.RequireService {
+			return State{}, errors.New("runtime: required bounded service became unavailable")
+		}
 		pid, e = c.Launcher.StartDirect(ctx, args, cfg.LogPath)
 	}
 	if e != nil {
@@ -349,17 +408,19 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 	}
 	p, e := c.Inspector.Process(ctx, pid)
 	if e != nil {
-		c.cleanupStarted(manager, pid)
+		c.cleanupStarted(manager, pid, cfg.Engine)
 		return State{}, e
 	}
-	return State{PID: pid, Executable: p.Executable, ArgsFingerprint: p.ArgsFingerprint, StartTime: p.StartTime, Model: cfg.Model, Port: cfg.Port, Server: cfg.Server, Vendor: cfg.Vendor, LogPath: cfg.LogPath, ContextSize: cfg.ContextSize, Manager: manager}, nil
+	savedConfig := cfg
+	return State{LaunchConfig: &savedConfig, PID: pid, Executable: p.Executable, ArgsFingerprint: p.ArgsFingerprint, StartTime: p.StartTime, Model: cfg.Model, Port: cfg.Port, Server: cfg.Server, Vendor: cfg.Vendor, LogPath: cfg.LogPath, ContextSize: cfg.ContextSize, Manager: manager}, nil
 }
 
-func (c *Controller) cleanupStarted(manager string, pid int) {
+func (c *Controller) cleanupStarted(manager string, pid int, name string) {
+	engine := c.engine(name)
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if manager == "systemd" && c.Service != nil {
-		_ = c.Service.Stop(cleanupCtx, c.Unit)
+	if manager == "systemd" && engine.Service != nil {
+		_ = engine.Service.Stop(cleanupCtx, engine.Unit)
 		return
 	}
 	if launcher, ok := c.Launcher.(interface {
@@ -367,34 +428,6 @@ func (c *Controller) cleanupStarted(manager string, pid int) {
 	}); ok {
 		_ = launcher.Terminate(cleanupCtx, pid)
 	}
-}
-
-// llamaArgs builds the llama-server command line.
-//
-// --parallel 1 is deliberate: llama-server's auto slot count (n_parallel = 4
-// with kv_unified) segfaults on load for qwen35-arch models such as
-// Qwen3.6-27B. Arkey serves one client at a time, so a single slot costs
-// nothing and keeps the runtime from crashing on those models. Multiple slots
-// also make llama-server reassign turns by prompt similarity, which invalidates
-// context checkpoints and eventually fails to restore the KV cache mid-session.
-//
-// KVCacheType halves bytes-per-token against f16, which buys twice the context
-// for the same VRAM at a quality cost small enough to be invisible in practice.
-// Context length is the binding constraint for agent sessions, so that is the
-// right trade. KVCacheBytesPerElement must describe KVCacheType: context sizing
-// is computed from it, so the two drifting apart would size the window against
-// a cache the server is not actually running.
-const (
-	KVCacheType            = "q8_0"
-	KVCacheBytesPerElement = 1
-)
-
-func llamaArgs(c Config) []string {
-	args := []string{c.Server, "--model", c.Model, "--alias", "arkey-local", "--host", "127.0.0.1", "--port", fmt.Sprint(c.Port), "--ctx-size", fmt.Sprint(c.ContextSize), "--gpu-layers", "all", "--parallel", "1", "--cache-type-k", KVCacheType, "--cache-type-v", KVCacheType}
-	if c.ChatTemplate != "" {
-		args = append(args, "--chat-template-file", c.ChatTemplate)
-	}
-	return args
 }
 
 // ProcessLiveness answers "is this PID running at all", separately from
@@ -443,8 +476,12 @@ func (c *Controller) stopOwned(ctx context.Context, s State) error {
 			return fmt.Errorf("runtime: refusing to stop process %d: it is running but is not the server this record describes (started outside Arkey, or the PID was reused)", s.PID)
 		}
 	}
-	if s.Manager == "systemd" && c.Service != nil && c.Service.Available(ctx) {
-		return c.Service.Stop(ctx, c.Unit)
+	engine := c.engine(stateEngine(s))
+	if s.Manager == "systemd" {
+		if engine.Service == nil || !engine.Service.Available(ctx) {
+			return errors.New("runtime: service manager unavailable; cannot safely stop owned unit")
+		}
+		return engine.Service.Stop(ctx, engine.Unit)
 	}
 	if x, ok := c.Launcher.(interface {
 		Terminate(context.Context, int) error
@@ -453,9 +490,12 @@ func (c *Controller) stopOwned(ctx context.Context, s State) error {
 	}
 	return errors.New("runtime: direct launcher cannot terminate process")
 }
-func (c *Controller) waitHealthy(ctx context.Context, port int) error {
+func (c *Controller) waitHealthy(ctx context.Context, cfg Config, state State) error {
 	for i := 0; i < c.Attempts; i++ {
-		ok, e := c.Health.LlamaHealthy(ctx, port)
+		if c.engine(cfg.Engine).Recognize == nil && !c.owns(ctx, state) {
+			return fmt.Errorf("%w: process exited; see %s", ErrHealth, cfg.LogPath)
+		}
+		ok, e := c.engine(cfg.Engine).Health(cfg).Healthy(ctx, cfg.Port)
 		if e == nil && ok {
 			return nil
 		}
@@ -471,28 +511,41 @@ func (c *Controller) restore(ctx context.Context, old State, cfg Config) error {
 	if old.PID < 1 || old.Model == "" {
 		return nil
 	}
-	cfg.Model = old.Model
-	if old.Server != "" {
-		cfg.Server = old.Server
+	if old.LaunchConfig != nil {
+		cfg = *old.LaunchConfig
+	} else {
+		cfg.Engine = ""
+		cfg.Environment = nil
+		cfg.ExtraArgs = nil
+		cfg.ServedModel = ""
+		cfg.Model = old.Model
+		if old.Server != "" {
+			cfg.Server = old.Server
+		}
+		if old.Vendor != "" {
+			cfg.Vendor = old.Vendor
+		}
+		if old.LogPath != "" {
+			cfg.LogPath = old.LogPath
+		}
+		if old.ContextSize > 0 {
+			cfg.ContextSize = old.ContextSize
+		}
+		cfg.Port = old.Port
 	}
-	if old.Vendor != "" {
-		cfg.Vendor = old.Vendor
+	if err := c.ensureRoute(ctx, c.engine(cfg.Engine)); err != nil {
+		return err
 	}
-	if old.LogPath != "" {
-		cfg.LogPath = old.LogPath
-	}
-	if old.ContextSize > 0 {
-		cfg.ContextSize = old.ContextSize
-	}
+
 	s, e := c.start(ctx, cfg)
 	if e != nil {
 		return e
 	}
-	if e = c.waitHealthy(ctx, cfg.Port); e != nil {
+	if e = c.waitHealthy(ctx, cfg, s); e != nil {
 		_ = c.stopOwned(ctx, s)
 		return e
 	}
-	if ok, accelerationErr := c.Backend.Accelerated(ctx, cfg.LogPath, cfg.Vendor); accelerationErr != nil {
+	if ok, accelerationErr := c.engine(cfg.Engine).Backend.Accelerated(ctx, cfg.LogPath, cfg.Vendor); accelerationErr != nil {
 		_ = c.stopOwned(ctx, s)
 		return accelerationErr
 	} else if !ok {
@@ -506,3 +559,16 @@ func ModelLabel(path string) string { return filepath.Base(path) }
 type realClock struct{}
 
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+func sameLaunchConfig(a, b Config) bool {
+	return a.Engine == b.Engine && a.Server == b.Server && a.Model == b.Model && a.Vendor == b.Vendor && a.Port == b.Port && a.ContextSize == b.ContextSize && a.LogPath == b.LogPath && a.ChatTemplate == b.ChatTemplate && a.ServedModel == b.ServedModel && maps.Equal(a.Environment, b.Environment) && slices.Equal(a.ExtraArgs, b.ExtraArgs)
+}
+func launchConfigForState(s State, fallback Config) Config {
+	if s.LaunchConfig != nil {
+		return *s.LaunchConfig
+	}
+	fallback.Engine = ""
+	fallback.Port = s.Port
+	fallback.ContextSize = s.ContextSize
+	return fallback
+}

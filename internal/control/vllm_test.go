@@ -2,76 +2,111 @@ package control
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/JulianAbeleda/arkey_v3/internal/app"
 	"github.com/JulianAbeleda/arkey_v3/internal/config"
 	"github.com/JulianAbeleda/arkey_v3/internal/moonbridge"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
+	arkeyruntime "github.com/JulianAbeleda/arkey_v3/internal/runtime"
 )
 
-func TestVLLMSelectionAndLaunch(t *testing.T) {
+type fakeLocalRuntime struct {
+	cfg           arkeyruntime.Config
+	starts, stops int
+	err           error
+	loaded        bool
+}
+
+func (f *fakeLocalRuntime) Start(_ context.Context, c arkeyruntime.Config) (arkeyruntime.State, error, error) {
+	f.starts++
+	if f.err != nil {
+		return arkeyruntime.State{}, nil, f.err
+	}
+	f.cfg = c
+	f.loaded = true
+	return arkeyruntime.State{Model: c.Model}, nil, nil
+}
+func (f *fakeLocalRuntime) Loaded(context.Context, arkeyruntime.Config) (string, bool, error) {
+	if !f.loaded {
+		return "", false, nil
+	}
+	return f.cfg.Model, true, nil
+}
+func (f *fakeLocalRuntime) Stop(context.Context) error { f.stops++; f.loaded = false; return nil }
+
+func TestVLLMUsesSharedModelLifecycle(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default(home)
-	var upstreamCalls int
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Errorf("unexpected path %s", r.URL.Path)
-		}
-		upstreamCalls++
-		fmt.Fprint(w, `{"data":[{"id":"arkey-local-vllm","max_model_len":32768}]}`)
-	}))
-	defer upstream.Close()
-	cfg.Local.VLLMURL = upstream.URL
-	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"data":[{"id":"arkey-local-vllm"}]}`) }))
-	defer bridge.Close()
+	cfg.Hardware.Vendor = "nvidia"
+	checkpoint := filepath.Join(home, "checkpoint")
+	os.Mkdir(checkpoint, 0700)
+	os.WriteFile(filepath.Join(checkpoint, "config.json"), []byte(`{"model_type":"qwen3_5"}`), 0600)
+	os.WriteFile(filepath.Join(checkpoint, "model.safetensors"), []byte("fixture"), 0600)
+	cfg.Local.VLLMModelDirs = []string{home}
 	paths := platform.DefaultPaths(home)
 	store := config.Store{Path: paths.ConfigFile(), Home: home}
-	bc := moonbridge.Client{BaseURL: bridge.URL}
-	s := &Services{Paths: paths, Store: store, config: cfg, BridgeClient: bc, Bridge: &BridgeManager{Client: bc}}
-	// No llama controller is supplied: vLLM must never touch llama lifecycle.
-	status, err := s.ActivateLocal(context.Background(), "vllm", app.ModelSummary{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"data":[{"id":"arkey-local-vllm"}]}`) }))
+	defer server.Close()
+	runtime := &fakeLocalRuntime{}
+	s := &Services{Paths: paths, Store: store, config: cfg, Runtime: runtime, BridgeClient: moonbridge.Client{BaseURL: server.URL}}
+	discovered, err := s.DiscoverModels(context.Background(), "vllm")
+	if err != nil || len(discovered) != 1 {
+		t.Fatalf("discovery: %#v %v", discovered, err)
+	}
+	status, err := s.ActivateLocal(context.Background(), "vllm", discovered[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.LocalLoaded || status.LocalActive || status.Route.Model != "arkey-local-vllm" {
-		t.Fatalf("unexpected status %#v", status)
+	if !status.LocalActive || !status.LocalLoaded || status.LoadedModel != checkpoint || status.Route.Model != "arkey-local-vllm" {
+		t.Fatalf("bad status %#v", status)
 	}
 	saved, err := store.Load()
-	if err != nil || saved.Local.Runtime != "vllm" {
-		t.Fatalf("selection not saved: %v", err)
+	if err != nil || saved.Local.VLLMCheckpoint != checkpoint || saved.Local.Runtime != "vllm" {
+		t.Fatalf("selection not persisted: %v", err)
 	}
-	if s.ClientContextWindow() != 32768 {
-		t.Fatal("wrong vLLM context")
+	if runtime.cfg.Engine != "vllm" || runtime.cfg.ContextSize != 32768 || runtime.cfg.ServedModel != "arkey-local-vllm" {
+		t.Fatalf("bad runtime config %#v", runtime.cfg)
 	}
-	if err := s.PrepareLaunch(context.Background(), s.SelectedModel()); err != nil {
-		t.Fatal(err)
+	if err = s.PrepareLaunch(context.Background(), s.SelectedModel()); err != nil || runtime.starts != 2 {
+		t.Fatalf("launch did not use shared runtime: %v", err)
 	}
-	if upstreamCalls < 3 {
-		t.Fatal("launch did not recheck upstream")
+	if _, err = s.UnloadLocal(context.Background()); err != nil || runtime.stops != 1 {
+		t.Fatalf("unload: %v", err)
 	}
-	if _, err := s.UnloadLocal(context.Background()); err == nil {
-		t.Fatal("externally managed vLLM must not be stopped")
+	runtime.err = errors.New("start failed")
+	if _, err = s.ActivateLocal(context.Background(), "llama", app.ModelSummary{Path: checkpoint}); err == nil {
+		t.Fatal("expected failure")
+	}
+	if s.snapshot().Local.Runtime != "vllm" {
+		t.Fatal("failed load changed selected engine")
 	}
 }
 
-func TestVLLMRejectsWrongModelAndContextWithoutSaving(t *testing.T) {
-	for _, body := range []string{`{"data":[{"id":"other","max_model_len":32768}]}`, `{"data":[{"id":"arkey-local-vllm","max_model_len":8192}]}`, `{"data":[{"id":"arkey-local-vllm"}]}`, `not json`} {
-		t.Run(body, func(t *testing.T) {
-			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
-			defer upstream.Close()
-			cfg := config.Default(t.TempDir())
-			cfg.Local.VLLMURL = upstream.URL
-			s := &Services{config: cfg}
-			if _, err := s.ActivateLocal(context.Background(), "vllm", app.ModelSummary{}); err == nil {
-				t.Fatal("expected rejection")
-			}
-			if s.snapshot().Local.Runtime != "llama" {
-				t.Fatal("failed activation changed selection")
-			}
-		})
+func TestExplicitRouteOverrideUsesItsOwnClientBudget(t *testing.T) {
+	cfg := config.Default(t.TempDir())
+	cfg.Mode = "local"
+	cfg.Local.Runtime = "llama"
+	cfg.Local.ContextSize = 262144
+	s := &Services{config: cfg}
+	if got := s.ClientContextWindowFor("arkey-local-vllm"); got != 32768 {
+		t.Fatalf("vLLM inherited llama context: %d", got)
+	}
+	if got := s.ClientMaxOutputTokensFor("arkey-local-vllm"); got != 8192 {
+		t.Fatalf("bad output budget: %d", got)
+	}
+	if got := s.ClientReasoningEffortFor("arkey-local-vllm"); got != "medium" {
+		t.Fatalf("bad reasoning: %s", got)
+	}
+	cfg.Local.Runtime = "vllm"
+	s.config = cfg
+	if got := s.ClientContextWindowFor("arkey-local-llama"); got != 262144 {
+		t.Fatalf("llama inherited vLLM context: %d", got)
 	}
 }

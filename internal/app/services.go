@@ -32,7 +32,7 @@ type LaunchPlan struct{ Client, Model string }
 // every method must honor ctx and return promptly when cancelled.
 type Services interface {
 	Refresh(context.Context) (Status, error)
-	DiscoverModels(context.Context) ([]ModelSummary, error)
+	DiscoverModels(context.Context, string) ([]ModelSummary, error)
 	SelectClient(context.Context, string) (Status, error)
 	SelectFrontier(context.Context, string) (Status, error)
 	ActivateLocal(context.Context, string, ModelSummary) (Status, error)
@@ -43,10 +43,10 @@ type Services interface {
 // NopServices makes the model useful in previews and tests before backends are wired.
 type NopServices struct{}
 
-func (NopServices) Refresh(context.Context) (Status, error)                { return Status{}, nil }
-func (NopServices) DiscoverModels(context.Context) ([]ModelSummary, error) { return nil, nil }
-func (NopServices) SelectClient(context.Context, string) (Status, error)   { return Status{}, nil }
-func (NopServices) SelectFrontier(context.Context, string) (Status, error) { return Status{}, nil }
+func (NopServices) Refresh(context.Context) (Status, error)                        { return Status{}, nil }
+func (NopServices) DiscoverModels(context.Context, string) ([]ModelSummary, error) { return nil, nil }
+func (NopServices) SelectClient(context.Context, string) (Status, error)           { return Status{}, nil }
+func (NopServices) SelectFrontier(context.Context, string) (Status, error)         { return Status{}, nil }
 func (NopServices) ActivateLocal(context.Context, string, ModelSummary) (Status, error) {
 	return Status{}, nil
 }

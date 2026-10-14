@@ -240,6 +240,10 @@ func TestVLLMMenuActivatesVLLM(t *testing.T) {
 	m := New(s)
 	m.screen = localScreen
 	m.cursors[localScreen] = 2
+	m.activate()
+	if m.modelRuntime != "vllm" {
+		t.Fatal("vLLM did not select model discovery")
+	}
 	if m.items()[2].Label != "vLLM" {
 		t.Fatal("missing vLLM entry")
 	}

@@ -26,6 +26,7 @@ const (
 // Model is the complete display state. Effects enter only through Services.
 type Model struct {
 	services                    Services
+	modelRuntime                string
 	screen                      screen
 	stack                       []screen
 	cursors                     map[screen]int
@@ -77,7 +78,7 @@ func (m Model) discover(parent context.Context, generation uint64, refresh bool)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		defer cancel()
-		v, err := m.services.DiscoverModels(ctx)
+		v, err := m.services.DiscoverModels(ctx, m.browsingRuntime())
 		return modelsDiscoveredMsg{generation: generation, models: v, refresh: refresh, err: err}
 	}
 }
@@ -98,10 +99,7 @@ func (m Model) selectClient(parent context.Context, generation uint64, name stri
 	}
 }
 func (m Model) activateLocal(parent context.Context, generation uint64, v ModelSummary) tea.Cmd {
-	runtimeName := "llama"
-	if m.screen == localScreen {
-		runtimeName = "vllm"
-	}
+	runtimeName := m.browsingRuntime()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 6*time.Minute)
 		defer cancel()
@@ -181,6 +179,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.restoreModelCursor(highlighted)
 				m.notice = "Local models refreshed."
 			} else {
+				m.cursors[modelsScreen] = 0
+				if m.status.Route.LocalRuntime == m.browsingRuntime() {
+					m.restoreModelCursor(m.status.Route.LocalModel)
+				}
 				m.push(modelsScreen)
 			}
 		}
@@ -420,10 +422,11 @@ func (m *Model) activate() tea.Cmd {
 	case localScreen:
 		if c == 0 {
 			m.notice = "tinygrad is in development and unavailable."
-		} else if c == 2 {
-			generation, ctx := m.begin()
-			return tea.Batch(m.spinner.Tick, m.activateLocal(ctx, generation, ModelSummary{}))
 		} else {
+			m.modelRuntime = "llama"
+			if c == 2 {
+				m.modelRuntime = "vllm"
+			}
 			generation, ctx := m.begin()
 			return tea.Batch(m.spinner.Tick, m.discover(ctx, generation, false))
 		}
@@ -462,13 +465,13 @@ func (m Model) items() []ui.Item {
 		return []ui.Item{
 			{Key: "1", Label: "Local", Detail: "runtime → installed model", State: m.localRuntimeState()},
 			{Key: "2", Label: "Frontier", Detail: "hosted AI provider", State: m.status.Route.Backend},
-			{Key: "3", Label: "GPU Auto-scan", Detail: "detect and align llama.cpp", State: m.status.GPU},
+			{Key: "3", Label: "GPU Auto-scan", Detail: "detect GPU and installed runtimes", State: m.status.GPU},
 		}
 	case localScreen:
 		return []ui.Item{
 			{Key: "1", Label: "tinygrad", Detail: "coming later · unavailable", State: "development", Disabled: true},
 			{Key: "2", Label: "llama.cpp", Detail: "local GGUF server", State: m.runtimeState("llama")},
-			{Key: "3", Label: "vLLM", Detail: "connect to configured local server", State: m.runtimeState("vllm")},
+			{Key: "3", Label: "vLLM", Detail: "local checkpoint server", State: m.runtimeState("vllm")},
 		}
 	case modelsScreen:
 		out := make([]ui.Item, len(m.models))
@@ -508,6 +511,9 @@ func (m Model) localRuntimeState() string {
 	return "not selected"
 }
 func (m Model) title() string {
+	if m.screen == modelsScreen {
+		return "LOCAL · " + strings.ToUpper(m.browsingRuntime()) + " · MODELS"
+	}
 	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER"}[m.screen]
 }
 func (m Model) subtitle() string {
@@ -517,7 +523,7 @@ func (m Model) subtitle() string {
 	case tuiScreen:
 		return "Arkey-modified harnesses; upstream clients stay external and untouched."
 	case modelsScreen:
-		return "Select a GGUF to load. The active model is marked ● loaded."
+		return "Select a model to load. The active model is marked ● loaded."
 	}
 	return "Configure AI routes and local hardware alignment."
 }
@@ -585,11 +591,12 @@ func (m Model) runtimeState(runtime string) string {
 	if m.status.Route.LocalRuntime != runtime {
 		return ""
 	}
-	if runtime == "vllm" {
-		if m.status.LocalLoaded {
-			return "connected"
-		}
-		return "unavailable"
-	}
 	return m.localRuntimeState()
+}
+
+func (m Model) browsingRuntime() string {
+	if m.modelRuntime == "" {
+		return "llama"
+	}
+	return m.modelRuntime
 }
