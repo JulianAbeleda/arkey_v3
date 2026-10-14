@@ -143,3 +143,36 @@ two baseline failures (`TestGoogleGenaiE2E_ToolUseRoundTrip` and
 well as the patched tree. They are outside these changes.
 Raw smoke/config/request-budget records remain private on this box under
 `/home/ubuntu/storage/arkey-autoctx-kimi-20261014/`.
+
+## FP8 KV capacity and bridge reload fix
+
+A later managed launch on the same RTX 5090, vLLM 0.31.0 and NVFP4 checkpoint
+changed only the requested KV dtype from `auto` (BF16) to `fp8`, retaining
+90% GPU utilization, one sequence, 2,048 batched tokens and automatic context.
+The engine selected FLASHINFER attention instead of FLASH_ATTN, reported
+7.84 GiB available KV memory and auto-fitted **244,608 total tokens**. The API
+reported the same limit. BF16 previously fitted 94,864; this gain includes the
+backend's memory behavior, not just the ratio of cache element sizes. The
+hybrid model's recurrent state remains separately allocated. llama.cpp's
+262,144-token Q8_0 setup is a reference capacity, not a matched speed result.
+
+The local Arkey config now requests FP8. Kimi gets a 32,768-token output reserve,
+leaving 211,840 tokens before other client margins. Direct Chat and Kimi both
+returned `ARKEY_FP8_OK`; Kimi's file-read round trip returned `maple-4827`.
+These are startup and short functional checks, not full-window quality,
+performance or stability tests. No KV calibration was performed. See
+[vLLM 0.31's FP8 cache documentation](https://docs.vllm.ai/en/v0.31.0/features/quantization/quantized_kvcache/)
+for scaling/calibration considerations. FP8 and llama's Q8_0 are different
+8-bit representations.
+
+An initial command used the removed `--calculate-kv-scales` option and failed;
+Arkey restored the prior BF16 service. The working command uses only
+`--kv-cache-dtype fp8`. Subsequent testing exposed a generic bridge reload bug:
+Reload could stop an owned service before initializing its default unit name,
+causing `exit status 5`. Reload now initializes the unit before stopping it,
+while preserving custom names. A regression test covers both names. A live
+context-metadata change then restarted MoonBridge successfully and Kimi passed.
+
+`go test -race ./...` and `go vet ./...` passed; Darwin/arm64 compile checks
+passed (not a macOS runtime test). Local artifacts are under
+`/home/ubuntu/storage/arkey-fp8-cache-20261014/`.

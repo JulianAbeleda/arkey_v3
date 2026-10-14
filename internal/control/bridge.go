@@ -45,6 +45,9 @@ func (m *BridgeManager) EnsureLocalRoute(ctx context.Context, port, contextSize 
 // alone and EnsureRoute reports it.
 func (m *BridgeManager) Reload(ctx context.Context, route string) error {
 	m.mu.Lock()
+	if m.Unit == "" {
+		m.Unit = "arkey-moonbridge"
+	}
 	previous, err := m.Store.Load(ctx)
 	if err == nil && previous.PID > 0 && m.owns(ctx, previous) {
 		if err = m.stop(ctx, previous); err != nil {
