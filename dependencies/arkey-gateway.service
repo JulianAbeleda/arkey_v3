@@ -1,0 +1,20 @@
+# Arkey gateway: one llama.cpp-shaped endpoint in front of whichever local
+# engine runs (llama.cpp or vLLM, from Arkey's configuration).
+#
+#   install -D -m 0644 dependencies/arkey-gateway.service ~/.config/systemd/user/arkey-gateway.service
+#   systemctl --user daemon-reload && systemctl --user enable --now arkey-gateway
+#   loginctl enable-linger "$USER"   # start at boot without a login
+#
+# Point clients (or `tailscale serve --tcp <port> tcp://127.0.0.1:8090`) at
+# 127.0.0.1:8090 once; switching engines no longer changes their address.
+[Unit]
+Description=Arkey gateway (stable endpoint for the running local engine)
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/arkey gateway --listen 127.0.0.1:8090
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -18,6 +18,7 @@ import (
 	"github.com/JulianAbeleda/arkey_v3/internal/codex"
 	"github.com/JulianAbeleda/arkey_v3/internal/control"
 	"github.com/JulianAbeleda/arkey_v3/internal/crush"
+	"github.com/JulianAbeleda/arkey_v3/internal/gateway"
 	"github.com/JulianAbeleda/arkey_v3/internal/kimi"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	"golang.org/x/sys/unix"
@@ -34,6 +35,13 @@ func run(args []string) int {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "version") {
 		fmt.Printf("arkey %s (%s)\n", version, commit)
 		return 0
+	}
+	if len(args) > 0 && args[0] == "gateway" {
+		home := os.Getenv("ARKEY_USER_HOME")
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		return gateway.Main(args[1:], home, os.Stderr)
 	}
 	parsed, err := cli.Parse(args)
 	if err != nil {
