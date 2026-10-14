@@ -62,7 +62,8 @@ type Services struct {
 	config     config.Config
 	// serverChanged is set when SelectServer rewrote the MoonBridge config,
 	// so the next launch restarts MoonBridge instead of trusting its catalog.
-	serverChanged bool
+	serverChanged       bool
+	resolvedVLLMContext int
 }
 
 func New(home, workspace string) (*Services, error) {
@@ -374,7 +375,7 @@ func (s *Services) ActivateLocal(ctx context.Context, runtimeName string, model 
 	} else {
 		cfg.Local.Model = canonical
 	}
-	if _, rollback, err := s.Runtime.Start(ctx, s.runtimeConfig(ctx, cfg)); err != nil {
+	if _, rollback, err := s.startLocal(ctx, cfg); err != nil {
 		if rollback != nil {
 			return app.Status{}, fmt.Errorf("load failed: %w; previous-model rollback failed: %v", err, rollback)
 		}
@@ -494,7 +495,7 @@ func (s *Services) PrepareLaunch(ctx context.Context, model string) error {
 		if launchCfg.Model == "" {
 			return errors.New("no local model is selected; open Config → Local first")
 		}
-		if _, rollback, err := s.Runtime.Start(ctx, launchCfg); err != nil {
+		if _, rollback, err := s.startLocal(ctx, cfg); err != nil {
 			if rollback != nil {
 				return fmt.Errorf("local startup failed: %w; rollback failed: %v", err, rollback)
 			}
@@ -569,7 +570,12 @@ func (s *Services) ClientContextWindowFor(model string) int {
 	cfg := s.configForRoute(model)
 	if cfg.Mode == "local" {
 		if cfg.Local.Runtime == "vllm" {
-			return cfg.Local.VLLMContextSize
+			if cfg.Local.VLLMContextSize > 0 {
+				return cfg.Local.VLLMContextSize
+			}
+			s.mu.RLock()
+			defer s.mu.RUnlock()
+			return s.resolvedVLLMContext
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -586,14 +592,7 @@ func (s *Services) ClientContextWindowFor(model string) int {
 // to plan against a budget that cannot exist.
 func (s *Services) ClientMaxOutputTokens() int { return s.ClientMaxOutputTokensFor(s.SelectedModel()) }
 func (s *Services) ClientMaxOutputTokensFor(model string) int {
-	tokens := s.ClientContextWindowFor(model) / 4
-	if tokens < 4096 {
-		return 4096
-	}
-	if tokens > 32768 {
-		return 32768
-	}
-	return tokens
+	return models.OutputBudget(s.ClientContextWindowFor(model))
 }
 
 func (s *Services) ClientBinary(client string) string { return s.clientBinary(client) }
@@ -815,7 +814,10 @@ func (s *Services) writeLocalMetadata(ctx context.Context, cfg config.Config) (e
 	for _, engine := range []string{"llama", "vllm"} {
 		path, window, effort := cfg.Local.Model, 0, ""
 		if engine == "vllm" {
-			path, window, effort = cfg.Local.VLLMCheckpoint, cfg.Local.VLLMContextSize, cfg.Local.VLLMReasoningEffort
+			path, window, effort = cfg.Local.VLLMCheckpoint, s.ClientContextWindowFor("arkey-local-vllm"), cfg.Local.VLLMReasoningEffort
+			if window == 0 {
+				continue
+			}
 		} else {
 			window = s.localContextSize(ctx, cfg)
 		}

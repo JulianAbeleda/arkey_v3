@@ -141,6 +141,12 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "Arkey client state:", err)
 		return 1
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	if err = services.PrepareLaunch(ctx, model); err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey route:", err)
+		return 1
+	}
 	var plan client.Plan
 	switch selectedClient {
 	case client.Claude:
@@ -170,12 +176,6 @@ func run(args []string) int {
 	}
 	if err = plan.Validate(selectedClient); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
-	defer cancel()
-	if err = services.PrepareLaunch(ctx, model); err != nil {
-		fmt.Fprintln(os.Stderr, "Arkey route:", err)
 		return 1
 	}
 	if selectedClient == client.Crush {

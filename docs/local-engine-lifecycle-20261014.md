@@ -90,3 +90,56 @@ pin `e11d9b8be1a3ddbb5515b1486f0abad6110a6308`; its server-package tests passed 
 exported build tree. A merged Arkey binary returned `ARKEY_MERGED_OK` through Codex
 using the existing AWQ service (PID 622241), without reloading the model. This
 additional smoke does not repeat the cold-load matrix or test macOS at runtime.
+
+## Auto context and Kimi fixes (later on 2026-10-14)
+
+`vllm_context_size = 0` now requests vLLM's native `--max-model-len auto`.
+The engine profiles available GPU memory and sizes its actual KV cache; Arkey
+reads the matching served model's `max_model_len` after health checks. Runtime
+state records that actual window separately from the zero-valued launch request.
+Client planning happens after startup, and MoonBridge route metadata and the
+Codex catalog receive the resolved window. Positive context values remain pins.
+This uses the installed vLLM 0.31.0 auto-fit support, documented in
+[vLLM's model configuration](https://docs.vllm.ai/en/latest/api/vllm/config/).
+
+On this RTX 5090, the selected Qwen3.8-27B NVFP4 model auto-fitted from its 262,144
+model limit to **94,864 tokens** with 90% GPU utilization, BF16 KV, one sequence,
+and 2,048 max batched tokens. This is a capacity result for those settings, not a
+maximum-context benchmark. The bounded service retained its 25,177,777,152-byte
+host-memory cap; measured startup peak was 4,065,591,296 bytes. The API and saved
+state agreed on 94,864, while the launch request remained zero. Reopening Arkey
+reused PID 637170. Kimi used 94,864 context and 23,716 reserved output tokens.
+
+Kimi had two independent failures:
+
+- Its default response reserve produced a request for 32,768 output tokens
+  against the original 32,768 total context. The server rejected it with HTTP
+  400. Arkey now sets `loop_control.reserved_context_size` and model output
+  metadata from one shared budget: one quarter of context, capped at 32,768.
+  Small windows receive a smaller reserve; no model or quantization names are
+  involved. Kimi's actual outgoing 32K-window request was verified to contain
+  `max_output_tokens: 8192`.
+- MoonBridge announced tool items with a call ID but sent argument deltas using
+  a different `fc_item_*` ID. Kimi rejected these as unknown stream indexes.
+  Streaming calls also started with the completed JSON string `{}` instead of
+  empty arguments. `dependencies/moonbridge-tool-stream.patch` makes item IDs
+  consistent and leaves the initial arguments empty for incremental assembly.
+  This is a protocol correction for all models, including interleaved calls.
+  The installer applies it to the pinned MoonBridge source and runs the adapter
+  regression tests before installing. No Kimi binary patch is needed.
+
+Live verification: Kimi returned `ARKEY_KIMI_OK` at the original 32K server
+window before auto-sizing. At the auto-sized window it returned
+`ARKEY_KIMI_AUTO_OK`. After the stream fix, its `Read` tool opened a generated
+fixture and it returned `maple-4827`; the tool round trip also passed with a
+32K client window and 8,192-token reserve against the auto-sized server.
+Codex also returned `ARKEY_CODEX_AUTO_OK` with the resolved context.
+These are short response/tool smokes, not long-session or full-context tests.
+
+Arkey race tests, vet, and Darwin/arm64 compile checks passed. MoonBridge's
+protocol packages and server tests passed. Its optional `-tags=e2e` suite has
+two baseline failures (`TestGoogleGenaiE2E_ToolUseRoundTrip` and
+`TestPluginHooks_MultiplePlugins`), reproduced on the clean pinned source as
+well as the patched tree. They are outside these changes.
+Raw smoke/config/request-budget records remain private on this box under
+`/home/ubuntu/storage/arkey-autoctx-kimi-20261014/`.

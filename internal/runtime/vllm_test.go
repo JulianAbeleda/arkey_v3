@@ -53,3 +53,20 @@ func TestVLLMHealthValidatesServedModelAndContext(t *testing.T) {
 		}
 	}
 }
+
+func TestVLLMAutoContextDelegatesToEngine(t *testing.T) {
+	c := Config{ContextSize: 0}
+	if args := strings.Join(VLLMArgs(c), " "); !strings.Contains(args, "--max-model-len auto") {
+		t.Fatal(args)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"local","max_model_len":98304}]}`)
+	}))
+	defer server.Close()
+	u, _ := url.Parse(server.URL)
+	port, _ := strconv.Atoi(u.Port())
+	n, err := (VLLMHealth{Model: "local"}).ContextWindow(context.Background(), port)
+	if err != nil || n != 98304 {
+		t.Fatalf("%d %v", n, err)
+	}
+}

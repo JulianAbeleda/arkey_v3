@@ -20,10 +20,11 @@ import (
 )
 
 type fakeLocalRuntime struct {
-	cfg           arkeyruntime.Config
-	starts, stops int
-	err           error
-	loaded        bool
+	cfg            arkeyruntime.Config
+	starts, stops  int
+	err            error
+	resolvedWindow int
+	loaded         bool
 }
 
 func (f *fakeLocalRuntime) Start(_ context.Context, c arkeyruntime.Config) (arkeyruntime.State, error, error) {
@@ -33,7 +34,11 @@ func (f *fakeLocalRuntime) Start(_ context.Context, c arkeyruntime.Config) (arke
 	}
 	f.cfg = c
 	f.loaded = true
-	return arkeyruntime.State{Model: c.Model}, nil, nil
+	window := c.ContextSize
+	if f.resolvedWindow > 0 {
+		window = f.resolvedWindow
+	}
+	return arkeyruntime.State{Model: c.Model, ContextSize: window}, nil, nil
 }
 func (f *fakeLocalRuntime) Loaded(context.Context, arkeyruntime.Config) (string, bool, error) {
 	if !f.loaded {
@@ -46,6 +51,7 @@ func (f *fakeLocalRuntime) Stop(context.Context) error { f.stops++; f.loaded = f
 func TestVLLMUsesSharedModelLifecycle(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default(home)
+	cfg.Local.VLLMContextSize = 32768
 	cfg.Hardware.Vendor = "nvidia"
 	checkpoint := filepath.Join(home, "checkpoint")
 	os.Mkdir(checkpoint, 0700)
@@ -93,6 +99,7 @@ func TestVLLMUsesSharedModelLifecycle(t *testing.T) {
 
 func TestExplicitRouteOverrideUsesItsOwnClientBudget(t *testing.T) {
 	cfg := config.Default(t.TempDir())
+	cfg.Local.VLLMContextSize = 32768
 	cfg.Mode = "local"
 	cfg.Local.Runtime = "llama"
 	cfg.Local.ContextSize = 262144
@@ -116,6 +123,7 @@ func TestExplicitRouteOverrideUsesItsOwnClientBudget(t *testing.T) {
 func TestClientCatalogFollowsCheckpointAndContextChanges(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default(home)
+	cfg.Local.VLLMContextSize = 32768
 	cfg.Local.ContextSize = 16384
 	cfg.Local.VLLMCheckpoint = filepath.Join(home, "Example-12B")
 	cfg.Local.VLLMContextSize = 65536
@@ -156,4 +164,24 @@ func TestClientCatalogFollowsCheckpointAndContextChanges(t *testing.T) {
 	s.config.Local.VLLMCheckpoint = filepath.Join(home, "Different-8B")
 	s.config.Local.VLLMContextSize = 32768
 	check("Different 8B", 32768)
+}
+
+func TestVLLMAutoWindowFlowsIntoClientAfterStartup(t *testing.T) {
+	cfg := config.Default(t.TempDir())
+	cfg.Local.Runtime = "vllm"
+	cfg.Local.VLLMCheckpoint = "/models/any-checkpoint"
+	cfg.Local.VLLMContextSize = 0
+	s := &Services{config: cfg, Runtime: &fakeLocalRuntime{resolvedWindow: 98304}}
+	if err := s.PrepareLaunch(context.Background(), "arkey-local-vllm"); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.ClientContextWindowFor("arkey-local-vllm"); n != 98304 {
+		t.Fatal(n)
+	}
+	if n := s.ClientMaxOutputTokensFor("arkey-local-vllm"); n != 24576 {
+		t.Fatal(n)
+	}
+	if s.snapshot().Local.VLLMContextSize != 0 {
+		t.Fatal("auto setting became a fixed pin")
+	}
 }

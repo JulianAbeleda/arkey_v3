@@ -45,7 +45,8 @@ trap 'find "$build_dir" -type f -delete 2>/dev/null || true; find "$build_dir" -
   git -C "$source_dir" archive HEAD | tar -x -C "$build_dir"
   cd "$build_dir"
   git apply "$repo_root/dependencies/moonbridge-local-output-budget.patch"
-  go test ./internal/service/server
+  git apply "$repo_root/dependencies/moonbridge-tool-stream.patch"
+  go test ./internal/service/server ./internal/protocol/openai
   go build -trimpath -o "$build_dir/moonbridge" ./cmd/moonbridge
 )
 install -m 0755 "$build_dir/moonbridge" "$install_dir/moonbridge"

@@ -1,0 +1,112 @@
+--- a/internal/protocol/openai/adapter.go
++++ b/internal/protocol/openai/adapter.go
+@@ -528,7 +528,8 @@
+ 				if toolUseID == "" {
+ 					toolUseID = fmt.Sprintf("call_%d", index)
+ 				}
+-				itemIDs[index] = fmt.Sprintf("fc_item_%d", index)
++				// Argument events must reference the ID announced by output_item.added.
++				itemIDs[index] = toolUseID
+ 				toolBlockNames[index] = event.ContentBlock.ToolName
+ 
+ 				// Check if this tool is a nested namespace (NestedOneOf/NestedAnyOf).
+@@ -1859,7 +1860,7 @@
+ 			CallID:    toolUseID,
+ 			Name:      block.ToolName,
+ 			Namespace: block.ToolNamespace,
+-			Arguments: toolInputString(block.ToolInput),
++			Arguments: streamingToolInputString(block.ToolInput),
+ 			Status:    "in_progress",
+ 		}
+ 	}
+@@ -1881,7 +1882,7 @@
+ 		CallID:    toolUseID,
+ 		Name:      itemN,
+ 		Namespace: itemNS,
+-		Arguments: toolInputString(block.ToolInput),
++		Arguments: streamingToolInputString(block.ToolInput),
+ 		Status:    "in_progress",
+ 	}
+ }
+@@ -2075,3 +2076,13 @@
+ 	}
+ 	return nil
+ }
++
++// A streaming tool call starts with no arguments, not a completed empty JSON
++// object. Clients concatenate later deltas onto this initial string.
++func streamingToolInputString(input json.RawMessage) string {
++	value := strings.TrimSpace(string(input))
++	if value == "" || value == "null" || value == "{}" {
++		return ""
++	}
++	return value
++}
+--- a/internal/protocol/openai/adapter_test.go
++++ b/internal/protocol/openai/adapter_test.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++	"fmt"
+ 	"strings"
+ 	"testing"
+ 
+@@ -542,3 +543,57 @@
+ 		}
+ 	}
+ }
++
++func TestStreamedToolIDsAndArgumentsRemainConsistent(t *testing.T) {
++	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
++	ch := make(chan format.CoreStreamEvent, 16)
++	for _, idx := range []int{2, 5} {
++		ch <- format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: idx, ContentBlock: &format.CoreContentBlock{Type: "tool_use", ToolUseID: fmt.Sprintf("call_%d", idx), ToolName: "read_file", ToolInput: json.RawMessage(`{}`)}}
++	}
++	for _, idx := range []int{5, 2} {
++		ch <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDelta, Index: idx, Delta: `{"path":`}
++		ch <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDelta, Index: idx, Delta: `"fixture.txt"}`}
++		ch <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDone, Index: idx, Delta: `{"path":"fixture.txt"}`}
++		ch <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: idx}
++	}
++	ch <- format.CoreStreamEvent{Type: format.CoreEventCompleted, Status: "completed"}
++	close(ch)
++	result, err := adapter.FromCoreStream(context.Background(), &format.CoreRequest{Model: "any-model"}, ch)
++	if err != nil {
++		t.Fatal(err)
++	}
++	arguments := map[string]string{}
++	done := 0
++	for event := range result.(*openai.OpenAIStreamResult).Chan() {
++		switch event.Event {
++		case "response.output_item.added":
++			item := event.Data.(openai.OutputItemEvent).Item
++			if item.Type == "function_call" {
++				if item.ID == "" || item.Arguments != "" {
++					t.Fatalf("invalid initial item: %+v", item)
++				}
++				arguments[item.ID] = item.Arguments
++			}
++		case "response.function_call_arguments.delta":
++			delta := event.Data.(openai.FunctionCallArgumentsDeltaEvent)
++			if _, ok := arguments[delta.ItemID]; !ok {
++				t.Fatalf("unknown item ID: %s", delta.ItemID)
++			}
++			arguments[delta.ItemID] += delta.Delta
++		case "response.function_call_arguments.done":
++			item := event.Data.(openai.FunctionCallArgumentsDoneEvent)
++			if arguments[item.ItemID] != item.Arguments {
++				t.Fatalf("arguments mismatch: %+v", item)
++			}
++			done++
++		case "response.output_item.done":
++			item := event.Data.(openai.OutputItemEvent).Item
++			if item.Type == "function_call" && arguments[item.ID] != item.Arguments {
++				t.Fatalf("final item mismatch: %+v", item)
++			}
++		}
++	}
++	if done != 2 {
++		t.Fatalf("completed %d tool calls", done)
++	}
++}

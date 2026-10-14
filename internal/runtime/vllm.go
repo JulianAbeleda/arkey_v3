@@ -17,7 +17,7 @@ import (
 // ValidateVLLM accepts a local Hugging Face checkpoint directory. Quantization
 // is read by vLLM from the checkpoint, not inferred from its name.
 func ValidateVLLM(c Config) error {
-	if c.Server == "" || c.LogPath == "" || c.Port < 1 || c.Port > 65535 || c.ContextSize < 4096 || c.ServedModel == "" {
+	if c.Server == "" || c.LogPath == "" || c.Port < 1 || c.Port > 65535 || (c.ContextSize != 0 && c.ContextSize < 4096) || c.ServedModel == "" {
 		return errors.New("runtime: incomplete vLLM configuration")
 	}
 	if c.Vendor != "nvidia" && c.Vendor != "amd" {
@@ -37,7 +37,11 @@ func ValidateVLLM(c Config) error {
 }
 
 func VLLMArgs(c Config) []string {
-	args := []string{c.Server, "-m", "vllm.entrypoints.openai.api_server", "--model", c.Model, "--host", "127.0.0.1", "--port", strconv.Itoa(c.Port), "--served-model-name", c.ServedModel, "--max-model-len", strconv.Itoa(c.ContextSize), "--language-model-only", "--max-num-seqs", "1", "--max-num-batched-tokens", "2048", "--gpu-memory-utilization", "0.90"}
+	length := strconv.Itoa(c.ContextSize)
+	if c.ContextSize == 0 {
+		length = "auto"
+	}
+	args := []string{c.Server, "-m", "vllm.entrypoints.openai.api_server", "--model", c.Model, "--host", "127.0.0.1", "--port", strconv.Itoa(c.Port), "--served-model-name", c.ServedModel, "--max-model-len", length, "--language-model-only", "--max-num-seqs", "1", "--max-num-batched-tokens", "2048", "--gpu-memory-utilization", "0.90"}
 	kind, _ := models.HFModelType(c.Model)
 	// The parser is a model-family capability, shared across AWQ/NVFP4 checkpoints.
 	if strings.HasPrefix(kind, "qwen3_5") || strings.HasPrefix(kind, "qwen3_8") {
@@ -87,18 +91,18 @@ type VLLMHealth struct {
 	ContextSize int
 }
 
-func (h VLLMHealth) Healthy(ctx context.Context, port int) (bool, error) {
+func (h VLLMHealth) ContextWindow(ctx context.Context, port int) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://127.0.0.1:%d/v1/models", port), nil)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	res, err := (&http.Client{Timeout: time.Second}).Do(req)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return false, nil
+		return 0, nil
 	}
 	var catalog struct {
 		Data []struct {
@@ -107,12 +111,17 @@ func (h VLLMHealth) Healthy(ctx context.Context, port int) (bool, error) {
 		} `json:"data"`
 	}
 	if err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&catalog); err != nil {
-		return false, err
+		return 0, err
 	}
 	for _, m := range catalog.Data {
-		if m.ID == h.Model && m.MaxModelLen >= h.ContextSize {
-			return true, nil
+		if m.ID == h.Model && m.MaxModelLen >= max(4096, h.ContextSize) {
+			return m.MaxModelLen, nil
 		}
 	}
-	return false, nil
+	return 0, nil
+}
+
+func (h VLLMHealth) Healthy(ctx context.Context, port int) (bool, error) {
+	n, err := h.ContextWindow(ctx, port)
+	return n > 0 && err == nil, err
 }

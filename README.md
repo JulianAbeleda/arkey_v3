@@ -18,6 +18,7 @@ reference.
 - `internal/`: Bubble Tea UI, configuration, GPU, MoonBridge, and llama runtime
 - `dependencies/moonbridge.env`: the exact MoonBridge fork revision used by Arkey
 - `dependencies/moonbridge.example.yml`: credential-free MoonBridge config template
+- `dependencies/moonbridge-tool-stream.patch`: consistent tool-call stream IDs and incremental arguments
 - `scripts/install-moonbridge-dependency.sh`: verified dependency build/install
 - `dependencies/brave-search.env`: the exact Brave Search MCP server version used by Arkey
 - `dependencies/brave-search-rate-limit.patch`: patch that makes the client-side rate limiter queue instead of throwing
@@ -71,12 +72,22 @@ name is hardcoded. The internal `arkey-local-*` route IDs remain stable.
 The current copied Codex binary still prints the route ID in its footer; using
 the catalog display name there requires a client display change.
 
-vLLM uses the explicit `local.vllm_context_size` (default 32,768 tokens).
+vLLM uses `local.vllm_context_size = 0` by default: Arkey passes
+`--max-model-len auto`, and vLLM profiles GPU memory and fits the KV cache within
+its memory-utilization budget and the model's supported context. A positive value
+of at least 4,096 pins the window. Existing positive settings remain pinned.
+After startup, Arkey reads the served model's actual `max_model_len` from
+`/v1/models` and uses it for MoonBridge, client launch budgets, and catalog metadata.
+It preserves zero in the requested launch config so reopening Arkey reuses the
+healthy auto-sized process. This requires a vLLM version supporting auto-fit.
 llama.cpp uses `local.context_size`; zero derives a window from model metadata,
 GPU memory, and the configured KV-cache precision. The client receives the same
 resolved context as its engine. Catalog metadata reserves 10% of that context,
-and the client output budget is one quarter of the window, clamped to
-4,096–32,768 tokens. The reasoning label such as `medium` is a separate setting.
+and the client output budget is one quarter of the window, capped at 32,768
+tokens. Kimi's `loop_control.reserved_context_size` follows this budget too;
+leaving its larger default reserve can make it request the entire context as
+output. The same calculation applies to every engine and model. The reasoning
+label such as `medium` is a separate setting.
 
 ## Shared local inference
 
@@ -255,7 +266,7 @@ vllm_python = "/path/to/vllm-venv/bin/python"
 vllm_model_dirs = ["/path/to/checkpoints"]
 vllm_url = "http://127.0.0.1:8000"
 vllm_model = "arkey-local-vllm" # served API name, not a checkpoint path
-vllm_context_size = 32768
+vllm_context_size = 0 # let vLLM fit the context to GPU memory
 vllm_reasoning_effort = "medium"
 vllm_memory_mib = 24576
 vllm_args = []

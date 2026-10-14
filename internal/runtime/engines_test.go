@@ -112,3 +112,43 @@ func TestRequiredServiceNeverFallsBackToDirect(t *testing.T) {
 		t.Fatal("fell back to direct launch")
 	}
 }
+
+type sizedHealth struct{ window int }
+
+func (h sizedHealth) Healthy(context.Context, int) (bool, error)      { return true, nil }
+func (h sizedHealth) ContextWindow(context.Context, int) (int, error) { return h.window, nil }
+
+func TestAutoContextPersistsResolvedWindowAndReusesProcess(t *testing.T) {
+	c, store, _, launcher := setup()
+	addTestEngine(c, nil, sizedHealth{65536})
+	next := cfg()
+	next.Engine = "other"
+	next.ContextSize = 0
+	state, _, err := c.Start(context.Background(), next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ContextSize != 65536 || store.s.LaunchConfig.ContextSize != 0 {
+		t.Fatalf("lost request/resolved distinction: %+v", state)
+	}
+	if _, _, err := c.Start(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatal("auto-sized server restarted despite unchanged request")
+	}
+}
+
+func TestAutoContextRefusesMissingWindowAndCleansUp(t *testing.T) {
+	c, _, _, launcher := setup()
+	addTestEngine(c, nil, sizedHealth{0})
+	next := cfg()
+	next.Engine = "other"
+	next.ContextSize = 0
+	if _, _, err := c.Start(context.Background(), next); err == nil {
+		t.Fatal("missing context accepted")
+	}
+	if len(launcher.stopped) != 1 {
+		t.Fatal("failed auto-sized process was not released")
+	}
+}

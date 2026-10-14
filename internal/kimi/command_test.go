@@ -1,6 +1,7 @@
 package kimi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,5 +43,25 @@ func TestBuildAndWriteConfigUseIsolatedState(t *testing.T) {
 	}
 	if len(plan.Args) != 2 || plan.Args[1] != ModelAlias {
 		t.Fatalf("args = %#v", plan.Args)
+	}
+}
+
+func TestKimiReserveTracksContextWithoutModelSpecificRules(t *testing.T) {
+	for _, tc := range []struct {
+		model           string
+		window, reserve int
+	}{
+		{"arkey-local-vllm", 32768, 8192}, {"arkey-local-llama", 4096, 1024}, {"some-server", 262144, 32768},
+	} {
+		home := t.TempDir()
+		if err := WriteConfig(home, "http://localhost:1234", "local", tc.model, tc.window); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(home, "config.toml"))
+		for _, want := range []string{fmt.Sprintf("reserved_context_size = %d", tc.reserve), fmt.Sprintf("max_output_size = %d", tc.reserve)} {
+			if !strings.Contains(string(data), want) {
+				t.Fatalf("%s: missing %s", tc.model, want)
+			}
+		}
 	}
 }

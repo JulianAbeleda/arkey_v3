@@ -89,7 +89,7 @@ type UI struct {
 
 func Default(home string) Config {
 	d := filepath.Join(home, ".config", "arkey")
-	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMPython: "python3", VLLMModelDirs: []string{filepath.Join(home, "models")}, VLLMMemoryMiB: 24576, VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 32768, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
+	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMPython: "python3", VLLMModelDirs: []string{filepath.Join(home, "models")}, VLLMMemoryMiB: 24576, VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 0, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {
@@ -142,8 +142,8 @@ func (c Config) Validate() error {
 			return errors.New("invalid vLLM environment")
 		}
 	}
-	if c.Local.VLLMModel == "" || c.Local.VLLMContextSize < 4096 {
-		return errors.New("vLLM requires a served model name and context size of at least 4096")
+	if c.Local.VLLMModel == "" || (c.Local.VLLMContextSize != 0 && c.Local.VLLMContextSize < 4096) {
+		return errors.New("vLLM requires a served model name and context size of zero (auto) or at least 4096")
 	}
 	switch c.Local.VLLMReasoningEffort {
 	case "", "none", "minimal", "low", "medium", "high", "xhigh":

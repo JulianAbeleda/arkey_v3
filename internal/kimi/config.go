@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	modelinfo "github.com/JulianAbeleda/arkey_v3/internal/models"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -49,6 +50,11 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, model string, contextWindow 
 	}
 	cfg["default_model"] = ModelAlias
 	cfg["telemetry"] = false
+	loop, err := table(cfg, "loop_control")
+	if err != nil {
+		return err
+	}
+	loop["reserved_context_size"] = modelinfo.OutputBudget(contextWindow)
 	providers, err := table(cfg, "providers")
 	if err != nil {
 		return err
@@ -60,7 +66,8 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, model string, contextWindow 
 	}
 	models[ModelAlias] = map[string]any{
 		"provider": ModelAlias, "model": model, "max_context_size": contextWindow,
-		"capabilities": []string{"thinking", "tool_use"}, "display_name": "Arkey via MoonBridge",
+		"max_output_size": modelinfo.OutputBudget(contextWindow),
+		"capabilities":    []string{"thinking", "tool_use"}, "display_name": "Arkey via MoonBridge",
 	}
 	data, err := toml.Marshal(cfg)
 	if err != nil {

@@ -75,7 +75,7 @@ func TestClientMaxOutputTokensClamps(t *testing.T) {
 		contextSize int
 		want        int
 	}{
-		{contextSize: 1000, want: 4096},
+		{contextSize: 1000, want: 250},
 		{contextSize: 32768, want: 8192},
 		{contextSize: 1000000, want: 32768},
 	}

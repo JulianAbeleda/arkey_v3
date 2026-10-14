@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 
+	"github.com/JulianAbeleda/arkey_v3/internal/models"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,15 +28,20 @@ const configLimit = 1 << 20
 // providers and their keys included, is kept as it is. Reports whether the
 // file changed, so the caller knows MoonBridge must be restarted to see it.
 func SetServerRoute(path, origin, upstreamModel string, contextWindow int) (bool, error) {
-	return setLlamaRoute(path, origin, upstreamModel, contextWindow, ServerRoute, ServerModel, ServerProvider, "Arkey Server")
+	return setChatRoute(path, origin, upstreamModel, contextWindow, ServerRoute, ServerModel, ServerProvider, "Arkey Server")
 }
 
 // SetLocalRoute projects the central local runtime config into MoonBridge.
 func SetLocalRoute(path, origin string, contextWindow int) (bool, error) {
-	return setLlamaRoute(path, origin, "arkey-local", contextWindow, "arkey-local-llama", "arkey-local", "llama-local", "Arkey Local")
+	return setChatRoute(path, origin, "arkey-local", contextWindow, "arkey-local-llama", "arkey-local", "llama-local", "Arkey Local")
 }
 
-func setLlamaRoute(path, origin, upstreamModel string, contextWindow int, routeID, modelID, providerID, displayName string) (bool, error) {
+// SetVLLMRoute publishes the actual loaded context, including auto-fit results.
+func SetVLLMRoute(path, origin, upstreamModel string, contextWindow int) (bool, error) {
+	return setChatRoute(path, origin, upstreamModel, contextWindow, "arkey-local-vllm", "arkey-vllm", "vllm-local", "Arkey Local (vLLM)")
+}
+
+func setChatRoute(path, origin, upstreamModel string, contextWindow int, routeID, modelID, providerID, displayName string) (bool, error) {
 	if origin == "" || upstreamModel == "" || contextWindow <= 0 {
 		return false, errors.New("server route needs an origin, an upstream model and a context window")
 	}
@@ -54,13 +60,7 @@ func setLlamaRoute(path, origin, upstreamModel string, contextWindow int, routeI
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	maxOutput := contextWindow / 4
-	if maxOutput < 4096 {
-		maxOutput = 4096
-	}
-	if maxOutput > 32768 {
-		maxOutput = 32768
-	}
+	maxOutput := models.OutputBudget(contextWindow)
 	provider := map[string]any{
 		"protocol": "openai-chat",
 		// `local` is not about where the server runs; it tells MoonBridge the

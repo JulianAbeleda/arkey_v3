@@ -259,7 +259,10 @@ func (c *Controller) Start(ctx context.Context, cfg Config) (state State, rollba
 		rollback = c.restore(cleanupCtx, previous, cfg)
 		return State{}, rollback, e
 	}
-	if e = c.Store.Save(ctx, started); e != nil {
+	if e = c.resolveContext(ctx, cfg, &started); e == nil {
+		e = c.Store.Save(ctx, started)
+	}
+	if e != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
 		_ = c.stopOwned(cleanupCtx, started)
@@ -338,7 +341,7 @@ func (c *Controller) matchesHealthy(ctx context.Context, s State, cfg Config) bo
 	if stateEngine(s) != cfg.Engine || (s.LaunchConfig != nil && !sameLaunchConfig(*s.LaunchConfig, cfg)) {
 		return false
 	}
-	if s.Model != cfg.Model || s.Port != cfg.Port || s.ContextSize != cfg.ContextSize || s.SlotsPath != cfg.SlotsPath || !c.owns(ctx, s) {
+	if s.Model != cfg.Model || s.Port != cfg.Port || (cfg.ContextSize > 0 && s.ContextSize != cfg.ContextSize) || s.SlotsPath != cfg.SlotsPath || !c.owns(ctx, s) {
 		return false
 	}
 	ok, e := c.engine(cfg.Engine).Health(cfg).Healthy(ctx, cfg.Port)
@@ -578,6 +581,10 @@ func (c *Controller) restore(ctx context.Context, old State, cfg Config) error {
 		_ = c.stopOwned(ctx, s)
 		return ErrAcceleration
 	}
+	if e := c.resolveContext(ctx, cfg, &s); e != nil {
+		_ = c.stopOwned(ctx, s)
+		return e
+	}
 	return c.Store.Save(ctx, s)
 }
 func ModelLabel(path string) string { return filepath.Base(path) }
@@ -597,4 +604,27 @@ func launchConfigForState(s State, fallback Config) Config {
 	fallback.Port = s.Port
 	fallback.ContextSize = s.ContextSize
 	return fallback
+}
+
+// Auto-sized engines report the actual window after memory profiling. Persist
+// that window while keeping the requested (zero) value in LaunchConfig.
+func (c *Controller) resolveContext(ctx context.Context, cfg Config, state *State) error {
+	if cfg.ContextSize != 0 {
+		return nil
+	}
+	probe, ok := c.engine(cfg.Engine).Health(cfg).(interface {
+		ContextWindow(context.Context, int) (int, error)
+	})
+	if !ok {
+		return errors.New("runtime: engine cannot report its auto-sized context")
+	}
+	n, err := probe.ContextWindow(ctx, cfg.Port)
+	if err != nil {
+		return err
+	}
+	if n < 4096 {
+		return errors.New("runtime: engine did not report a usable context window")
+	}
+	state.ContextSize = n
+	return nil
 }
