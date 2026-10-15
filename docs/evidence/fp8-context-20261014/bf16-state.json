@@ -1,0 +1,14 @@
+{
+  "source": "Arkey runtime state (selected fields only)",
+  "context_size": 94864,
+  "engine": "vllm",
+  "requested_context": 0,
+  "model": "Qwen3.8-27B-NVFP4-NVIDIA",
+  "extra_args": [
+    "--dtype",
+    "bfloat16",
+    "--kv-cache-dtype",
+    "auto"
+  ],
+  "manager": "systemd"
+}
