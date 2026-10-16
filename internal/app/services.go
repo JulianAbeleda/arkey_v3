@@ -21,6 +21,7 @@ type Status struct {
 	Workspace, Runtime, MoonBridge, GPU string
 	Client                              string
 	Clients                             map[string]string
+	GUIs                                map[string]string
 	Route                               Route
 	Servers                             []ServerSummary
 	LoadedModel                         string
@@ -35,7 +36,8 @@ type ModelSummary struct {
 }
 
 // LaunchPlan is consumed by cmd/arkey only after Program.Run restores the terminal.
-type LaunchPlan struct{ Client, Model string }
+// GUI, when set, names a browser front end to serve instead of a client.
+type LaunchPlan struct{ Client, Model, GUI string }
 
 // Services are narrow asynchronous boundaries. Implementations live in backend packages;
 // every method must honor ctx and return promptly when cancelled.

@@ -103,6 +103,38 @@ On two Radeon AI PRO R9700s, Qwen3.8-27B AWQ under vLLM went from a 130,928-toke
 auto-fit window at 29-31 tok/s on one card to the full 262,144 at 46-53 tok/s on
 two.
 
+## GUI: DeepSeek Harness
+
+**Boot → 3 GUI → DeepSeek Harness** serves [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)'s
+browser UI on the local model, from the terminal Arkey was launched in:
+
+1. The selected local engine is loaded, or the running one reused.
+2. `arkey gateway` is started as the `arkey-gateway` user service unless
+   something already answers on `127.0.0.1:8090`. It is the OpenAI-compatible
+   endpoint (`/v1/models`, `/v1/chat/completions`, streams included) in front of
+   whichever engine runs, and it stays up for any other OpenAI client.
+3. DeepSeek Harness's web profile patch (`~/.dsh/profiles/web/cordis.patch.yml`,
+   or under `$DSH_HOME`) gets an `arkey-local` provider: `openai-completions` at
+   the gateway, sized to the context the gateway reports, with the switches a
+   vLLM/llama.cpp server needs (`max_tokens`, no `developer` role, Qwen
+   chat-template thinking). Only that route is owned by Arkey; other providers,
+   entries and comments are kept, and the default model is set to it only when
+   the profile names none, so a model picked in the UI stays picked.
+4. `dsh web` replaces Arkey in the terminal and opens the browser with its
+   one-time token. Port 3080 is used when free, otherwise any free port.
+   Ctrl+C stops the web server; the engine and gateway keep running.
+
+The checkout is `~/deepseek-harness` by default; set it under `[gui]`:
+
+```toml
+[gui]
+deepseek_harness = "/path/to/deepseek-harness"
+```
+
+It needs Node 22.19 or newer and an installed workspace (`pnpm install`). The
+provider's credential is a placeholder, `ARKEY_LOCAL_API_KEY`, set by Arkey at
+launch; the gateway checks none.
+
 ## Shared local inference
 
 Arkey owns the local llama-server used by both GameTerm and the coding

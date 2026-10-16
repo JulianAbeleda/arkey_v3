@@ -12,10 +12,10 @@ import (
 func TestNavigationStackAndWrapping(t *testing.T) {
 	m := New(nil)
 	m.move(-1)
-	if got := m.Cursor(); got != 2 {
-		t.Fatalf("wrap up = %d, want 2", got)
+	if got := m.Cursor(); got != 3 {
+		t.Fatalf("wrap up = %d, want 3", got)
 	}
-	m.activate() // Exit is cursor 2, reset to Config exercise.
+	m.activate() // Exit is cursor 3, reset to Config exercise.
 	m.cursors[mainScreen] = 1
 	m.activate()
 	if got := m.ScreenName(); got != "CONFIG" {
@@ -282,5 +282,33 @@ func TestConfigOffersServerAndTheServerScreenListsEntries(t *testing.T) {
 	m.activate()
 	if got := m.ScreenName(); got != "CONFIG · FRONTIER" {
 		t.Fatalf("frontier moved: %q", got)
+	}
+}
+
+// GUI sits between Config and Exit, so 1 TUI and 2 Config keep their keys.
+// Its one row serves DeepSeek Harness once the checkout is ready.
+func TestGUIScreenLaunchesDeepSeekHarnessWhenReady(t *testing.T) {
+	m := New(nil)
+	main := m.items()
+	if len(main) != 4 || main[0].Label != "TUI" || main[1].Label != "Config" || main[2].Label != "GUI" || main[3].Label != "Exit" {
+		t.Fatalf("boot items = %+v", main)
+	}
+	m.cursors[mainScreen] = 2
+	m.activate()
+	if got := m.ScreenName(); got != "GUI" {
+		t.Fatalf("screen = %q", got)
+	}
+	if items := m.items(); len(items) != 1 || !items[0].Disabled {
+		t.Fatalf("an unready DeepSeek Harness must be disabled: %+v", items)
+	}
+	if m.activate(); m.LaunchPlan() != nil {
+		t.Fatal("a disabled GUI was launched")
+	}
+	m.status.GUIs = map[string]string{"deepseek-harness": "ready"}
+	if cmd := m.activate(); cmd == nil {
+		t.Fatal("selecting a ready GUI must end the TUI")
+	}
+	if plan := m.LaunchPlan(); plan == nil || plan.GUI != "deepseek-harness" || plan.Client != "" {
+		t.Fatalf("plan = %+v", plan)
 	}
 }

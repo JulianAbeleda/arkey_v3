@@ -130,6 +130,9 @@ func run(args []string) int {
 		if launch == nil {
 			return 0
 		}
+		if launch.GUI != "" {
+			return runGUI(services)
+		}
 		model = launch.Model
 		selectedClient = launch.Client
 	}
@@ -241,4 +244,27 @@ func firstArg(args []string) string {
 		return ""
 	}
 	return args[0]
+}
+
+// runGUI serves DeepSeek Harness's browser UI from this terminal: the local
+// engine and the OpenAI-compatible gateway are readied first, then `dsh web`
+// replaces Arkey and opens the browser. Ctrl+C stops the web server; the
+// engine and gateway keep running for other clients.
+func runGUI(services *control.Services) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	plan, err := services.PrepareGUI(ctx, func(line string) { fmt.Println("Arkey:", line) })
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey GUI:", err)
+		return 1
+	}
+	if err = os.Chdir(plan.Dir); err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey GUI:", err)
+		return 1
+	}
+	if err = unix.Exec(plan.Binary, append([]string{plan.Binary}, plan.Args...), plan.Env); err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey GUI:", err)
+		return 1
+	}
+	return 0
 }

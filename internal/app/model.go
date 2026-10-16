@@ -22,6 +22,7 @@ const (
 	modelsScreen
 	frontierScreen
 	serverScreen
+	guiScreen
 )
 
 // Model is the complete display state. Effects enter only through Services.
@@ -419,9 +420,14 @@ func (m *Model) activate() tea.Cmd {
 			m.push(tuiScreen)
 		} else if c == 1 {
 			m.push(configScreen)
+		} else if c == 2 {
+			m.push(guiScreen)
 		} else {
 			return tea.Quit
 		}
+	case guiScreen:
+		m.launch = &LaunchPlan{GUI: []string{"deepseek-harness"}[c]}
+		return tea.Quit
 	case tuiScreen:
 		selected := m.selectedModel()
 		if selected == "" || selected == "arkey-local-" {
@@ -485,8 +491,11 @@ func (m Model) items() []ui.Item {
 		return []ui.Item{
 			{Key: "1", Label: "TUI", Detail: "choose the modded harness", State: clientLabel(m.status.Client)},
 			{Key: "2", Label: "Config", Detail: "routes and hardware", State: m.status.Route.Model},
-			{Key: "3", Label: "Exit", Detail: "close Arkey", State: "quit"},
+			{Key: "3", Label: "GUI", Detail: "browser front ends on the local model", State: m.guiState()},
+			{Key: "4", Label: "Exit", Detail: "close Arkey", State: "quit"},
 		}
+	case guiScreen:
+		return []ui.Item{m.guiItem("1", "deepseek-harness", "DeepSeek Harness (web UI)")}
 	case tuiScreen:
 		return []ui.Item{
 			m.clientItem("1", "codex", "Arkey Codex (modded harness)"),
@@ -570,7 +579,7 @@ func (m Model) title() string {
 	if m.screen == modelsScreen {
 		return "LOCAL · " + strings.ToUpper(m.browsingRuntime()) + " · MODELS"
 	}
-	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER", "CONFIG · SERVER"}[m.screen]
+	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER", "CONFIG · SERVER", "GUI"}[m.screen]
 }
 func (m Model) subtitle() string {
 	switch m.screen {
@@ -582,8 +591,25 @@ func (m Model) subtitle() string {
 		return "Select a model to load. The active model is marked ● loaded."
 	case serverScreen:
 		return "Select the llama.cpp server the harness talks to through MoonBridge."
+	case guiScreen:
+		return "Opens in your browser, served from this terminal, on the local model through Arkey's OpenAI-compatible gateway."
 	}
 	return "Configure AI routes and local hardware alignment."
+}
+
+func (m Model) guiItem(key, name, label string) ui.Item {
+	availability := m.status.GUIs[name]
+	if availability == "" {
+		availability = "missing"
+	}
+	return ui.Item{Key: key, Label: label, Detail: "local model via gateway :8090", State: availability, Disabled: availability != "ready"}
+}
+
+func (m Model) guiState() string {
+	if m.status.GUIs["deepseek-harness"] == "ready" {
+		return "DeepSeek Harness"
+	}
+	return "none ready"
 }
 
 func (m Model) clientItem(key, name, label string) ui.Item {
