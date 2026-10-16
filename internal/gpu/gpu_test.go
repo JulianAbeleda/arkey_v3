@@ -185,3 +185,15 @@ func TestPooledVRAMUsesSmallestDevice(t *testing.T) {
 		t.Fatalf("%+v pooled1 %d pooled2 %d", res, res.PooledVRAMBytes(1), res.PooledVRAMBytes(2))
 	}
 }
+
+// rocm-smi's last column is the VRAM in use; the total is the column headed so.
+func TestRocmSMIReadsTotalNotUsed(t *testing.T) {
+	out := "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\ncard0,34208743424,29897715712\ncard1,34208743424,31128629248\n"
+	got := rocmSMITotals(out)
+	if len(got) != 2 || got[0] != 34208743424 || got[1] != 34208743424 {
+		t.Fatalf("totals = %v", got)
+	}
+	if rocmSMITotals("no csv here") != nil {
+		t.Fatal("text without a header gave totals")
+	}
+}

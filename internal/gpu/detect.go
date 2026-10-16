@@ -92,15 +92,7 @@ func nvidiaVRAMBytes(ctx context.Context, r Runner) []int64 {
 
 func amdVRAMBytes(ctx context.Context, r Runner, sysfsRoot string) []int64 {
 	if b, e := r.Run(ctx, "rocm-smi", "--showmeminfo", "vram", "--csv"); e == nil {
-		var out []int64
-		for _, line := range strings.Split(string(b), "\n") {
-			fields := strings.Split(strings.TrimSpace(line), ",")
-			last := strings.TrimSpace(fields[len(fields)-1])
-			if n, ok := parseIntLoose(last); ok && n > 0 {
-				out = append(out, n)
-			}
-		}
-		if len(out) > 0 {
+		if out := rocmSMITotals(string(b)); len(out) > 0 {
 			return out
 		}
 	}
@@ -121,6 +113,33 @@ func amdVRAMBytes(ctx context.Context, r Runner, sysfsRoot string) []int64 {
 		}
 	}
 	return out
+}
+
+// rocmSMITotals reads each card's total VRAM from `rocm-smi --showmeminfo vram
+// --csv`. The table is "device,VRAM Total Memory (B),VRAM Total Used Memory (B)":
+// the total is found by its header, never by position, because the last
+// column is the memory in use.
+func rocmSMITotals(out string) []int64 {
+	col := -1
+	var totals []int64
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Split(strings.TrimSpace(line), ",")
+		if col < 0 {
+			for i, f := range fields {
+				h := strings.ToLower(f)
+				if strings.Contains(h, "total") && !strings.Contains(h, "used") {
+					col = i
+				}
+			}
+			continue
+		}
+		if col < len(fields) {
+			if n, ok := parseIntLoose(fields[col]); ok && n > 0 {
+				totals = append(totals, n)
+			}
+		}
+	}
+	return totals
 }
 
 type rocmAgent struct{ name, arch string }
