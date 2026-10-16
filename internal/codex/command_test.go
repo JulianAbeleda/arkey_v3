@@ -233,3 +233,20 @@ func TestBuildKeepsTheOperatorsPermissionChoice(t *testing.T) {
 		t.Fatal("an approval policy alone picks no sandbox; the default must stay")
 	}
 }
+
+// With key-release reporting on, the Enter that opens /permissions also
+// accepts its first row. Arkey keeps the terminal in legacy key mode unless
+// the operator set the switch either way.
+func TestBuildDisablesKeyReleaseReportingUnlessSet(t *testing.T) {
+	plan, err := Build(BuildOptions{Model: "m", Binary: "/bin/true", CodexHome: "/tmp/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(plan.Env, KeyboardEnhancementEnv+"=1") {
+		t.Fatalf("env = %v", plan.Env)
+	}
+	plan, _ = Build(BuildOptions{Model: "m", Binary: "/bin/true", CodexHome: "/tmp/h", Environment: []string{KeyboardEnhancementEnv + "=0"}})
+	if !contains(plan.Env, KeyboardEnhancementEnv+"=0") || contains(plan.Env, KeyboardEnhancementEnv+"=1") {
+		t.Fatalf("an operator setting must stand: %v", plan.Env)
+	}
+}

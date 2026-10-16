@@ -69,8 +69,21 @@ func Build(opts BuildOptions) (Plan, error) {
 	if !hasEnv(env, "ARKEY_MOONBRIDGE_TOKEN") {
 		env = client.SetEnv(env, "ARKEY_MOONBRIDGE_TOKEN", DefaultBridgeToken)
 	}
+	// Codex asks terminals that speak the kitty keyboard protocol (kitty,
+	// WezTerm, Ghostty, foot) to report key releases. Its list popups act on
+	// the release as well as the press, so the Enter that submits
+	// /permissions or /model also accepts the popup's first row the instant
+	// it opens. Keep the terminal in its legacy key mode unless the operator
+	// chose otherwise. Shift+Enter then submits; Ctrl+J still inserts a
+	// newline.
+	if !hasEnv(env, KeyboardEnhancementEnv) {
+		env = client.SetEnv(env, KeyboardEnhancementEnv, "1")
+	}
 	return Plan{Binary: opts.Binary, Args: args, Env: env}, nil
 }
+
+// KeyboardEnhancementEnv disables Codex's kitty keyboard protocol request.
+const KeyboardEnhancementEnv = "CODEX_TUI_DISABLE_KEYBOARD_ENHANCEMENT"
 
 // DefaultBridgeToken is what every Arkey client presents to MoonBridge
 // when nobody set one.
