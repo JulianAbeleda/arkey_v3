@@ -745,18 +745,42 @@ func gpuCount(cfg config.Config, detected gpu.Result) int {
 // localGPUs scans the hardware for gpuCount. Zero means the scan failed, which
 // leaves device choice to the engine's own default.
 func (s *Services) localGPUs(ctx context.Context, cfg config.Config) int {
+	n, _ := s.localPlacement(ctx, cfg)
+	return n
+}
+
+// localPlacement is localGPUs together with what the scan found.
+func (s *Services) localPlacement(ctx context.Context, cfg config.Config) (int, gpu.Result) {
 	model := cfg.Local.Model
 	if cfg.Local.Runtime == "vllm" {
 		model = cfg.Local.VLLMCheckpoint
 	}
 	if model == "" {
-		return 0
+		return 0, gpu.Result{}
 	}
 	detected, err := s.Detector.Detect(ctx)
 	if err != nil || detected.Count < 1 {
-		return 0
+		return 0, detected
 	}
-	return gpuCount(cfg, detected)
+	return gpuCount(cfg, detected), detected
+}
+
+// vllmArgs adds the attention backend that keeps decode fast on the detected
+// GPU to the operator's vllm_args, unless they chose one. On RDNA (gfx1xxx)
+// vLLM picks ROCM_ATTN, whose per-token cost climbs with context: measured on
+// two Radeon AI PRO R9700s with Qwen3.8-27B AWQ at batch 1, decode fell from
+// 53 tok/s on a short prompt to 11 tok/s on a 16k-token one, while
+// TRITON_ATTN held 57 and 53. Datacenter AMD parts keep vLLM's own choice.
+func vllmArgs(args []string, detected gpu.Result) []string {
+	if detected.Vendor != gpu.AMD || !strings.HasPrefix(detected.Arch, "gfx1") {
+		return args
+	}
+	for _, a := range args {
+		if a == "--attention-backend" || strings.HasPrefix(a, "--attention-backend=") {
+			return args
+		}
+	}
+	return append(append([]string(nil), args...), "--attention-backend", "TRITON_ATTN")
 }
 
 // qwen35 ships a chat template whose assistant branch renders prior tool-call
@@ -913,9 +937,10 @@ func (s *Services) runtimeConfig(ctx context.Context, cfg config.Config) arkeyru
 	if resolved, err := exec.LookPath(python); err == nil {
 		python = resolved
 	}
+	gpus, detected := s.localPlacement(ctx, cfg)
 	return arkeyruntime.Config{Engine: "vllm", Server: python, Model: cfg.Local.VLLMCheckpoint, Vendor: cfg.Hardware.Vendor,
 		Port: config.VLLMPort(cfg.Local.VLLMURL), ContextSize: cfg.Local.VLLMContextSize, LogPath: filepath.Join(s.Paths.LogsDir(), "vllm.log"),
-		ServedModel: cfg.Local.VLLMModel, Environment: cfg.Local.VLLMEnvironment, ExtraArgs: cfg.Local.VLLMArgs, GPUs: s.localGPUs(ctx, cfg)}
+		ServedModel: cfg.Local.VLLMModel, Environment: cfg.Local.VLLMEnvironment, ExtraArgs: vllmArgs(cfg.Local.VLLMArgs, detected), GPUs: gpus}
 }
 
 func (s *Services) configForRoute(model string) config.Config {

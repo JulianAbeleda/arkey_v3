@@ -41,6 +41,9 @@ type Result struct {
 	// split across several devices.
 	Count           int
 	DeviceVRAMBytes []int64
+	// Arch is the first GPU's ISA where the driver names one: an AMD
+	// gfx target such as gfx1201 (RDNA 4) or gfx942 (CDNA 3).
+	Arch string
 }
 
 // PooledVRAMBytes is the memory n devices offer to one model split evenly
@@ -120,21 +123,26 @@ func amdVRAMBytes(ctx context.Context, r Runner, sysfsRoot string) []int64 {
 	return out
 }
 
-// rocminfoGPUs returns the marketing name of every GPU agent. rocminfo lists
-// the CPU as an agent too, usually first, so a name is only taken from an
-// agent whose Device Type is GPU.
-func rocminfoGPUs(out string) []string {
-	var names []string
-	name := ""
+type rocmAgent struct{ name, arch string }
+
+// rocminfoGPUs returns every GPU agent's marketing name and gfx target.
+// rocminfo lists the CPU as an agent too, usually first, so only agents whose
+// Device Type is GPU count. An agent's own Name (gfx1201) precedes its ISA
+// entries, whose indented Name lines (amdgcn-amd-amdhsa--gfx1201) are skipped.
+func rocminfoGPUs(out string) []rocmAgent {
+	var gpus []rocmAgent
+	cur := rocmAgent{}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if v, ok := strings.CutPrefix(line, "Marketing Name:"); ok {
-			name = strings.TrimSpace(v)
+			cur.name = strings.TrimSpace(v)
+		} else if v, ok := strings.CutPrefix(line, "Name:"); ok && strings.HasPrefix(strings.TrimSpace(v), "gfx") {
+			cur = rocmAgent{arch: strings.TrimSpace(v)}
 		} else if v, ok := strings.CutPrefix(line, "Device Type:"); ok && strings.TrimSpace(v) == "GPU" {
-			names = append(names, name)
+			gpus = append(gpus, cur)
 		}
 	}
-	return names
+	return gpus
 }
 
 func firstMarketingName(out string) string {
@@ -181,8 +189,10 @@ func (d Detector) Detect(ctx context.Context) (Result, error) {
 	if _, e := os.Stat(k); e == nil {
 		if b, e := d.Runner.Run(ctx, "rocminfo"); e == nil {
 			vram := amdVRAMBytes(ctx, d.Runner, d.SysfsRoot)
-			if gpus := rocminfoGPUs(string(b)); len(gpus) > 0 && gpus[0] != "" {
-				return discrete(AMD, gpus[0], len(gpus), vram), nil
+			if gpus := rocminfoGPUs(string(b)); len(gpus) > 0 && gpus[0].name != "" {
+				r := discrete(AMD, gpus[0].name, len(gpus), vram)
+				r.Arch = gpus[0].arch
+				return r, nil
 			}
 			if x := firstMarketingName(string(b)); x != "" {
 				return discrete(AMD, x, 0, vram), nil

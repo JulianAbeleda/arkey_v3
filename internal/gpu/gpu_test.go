@@ -158,7 +158,7 @@ Agent 3
 	if e != nil {
 		t.Fatal(e)
 	}
-	if res.Vendor != AMD || res.Name != "AMD Radeon AI PRO R9700" || res.Count != 2 {
+	if res.Vendor != AMD || res.Name != "AMD Radeon AI PRO R9700" || res.Count != 2 || res.Arch != "gfx1201" {
 		t.Fatalf("%+v", res)
 	}
 	if res.TotalVRAMBytes != 34208743424 || res.PooledVRAMBytes(2) != 2*34208743424 {

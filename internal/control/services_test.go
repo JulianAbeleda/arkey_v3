@@ -406,3 +406,24 @@ func TestSharedSlotStorageIsScopedToModelAndContext(t *testing.T) {
 		t.Fatal("incompatible KV state would share a directory")
 	}
 }
+
+func TestVLLMArgsPickTritonAttentionOnRDNAOnly(t *testing.T) {
+	rdna := gpu.Result{Vendor: gpu.AMD, Arch: "gfx1201", Count: 2}
+	if got := strings.Join(vllmArgs(nil, rdna), " "); got != "--attention-backend TRITON_ATTN" {
+		t.Fatalf("RDNA args = %q", got)
+	}
+	own := []string{"--attention-backend=ROCM_ATTN"}
+	if got := vllmArgs(own, rdna); len(got) != 1 {
+		t.Fatalf("an operator's backend was overridden: %v", got)
+	}
+	for _, other := range []gpu.Result{{Vendor: gpu.AMD, Arch: "gfx942"}, {Vendor: gpu.NVIDIA}, {}} {
+		if got := vllmArgs([]string{"--x"}, other); len(got) != 1 {
+			t.Fatalf("%+v: %v", other, got)
+		}
+	}
+	args := []string{"--enforce-eager"}
+	vllmArgs(args, rdna)
+	if len(args) != 1 || args[0] != "--enforce-eager" {
+		t.Fatal("the configured args slice was modified")
+	}
+}
