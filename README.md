@@ -237,6 +237,8 @@ official `~/.config/crush` installation is untouched.
 For npm-installed Crush, the snapshot script resolves `run-crush.js` to the
 package's native `bin/crush`; the private copy does not depend on the npm
 launcher's relative imports. Select it through **TUI → Arkey Crush**.
+npm-installed Codex is resolved the same way, from `bin/codex.js` to the
+native binary in its per-platform `@openai/codex-*` package.
 
 Crush cannot use the Codex frontier: MoonBridge converts the Chat Completions
 ingress into Anthropic, Google GenAI and OpenAI Chat upstreams, but an OpenAI
@@ -248,6 +250,27 @@ Claude is snapshotted and isolated but intentionally unavailable in the menu
 until the pinned MoonBridge fork provides Anthropic Messages ingress; Arkey does
 not bypass that missing protocol boundary by modifying or redistributing Claude
 Code.
+
+### Client sandboxes
+
+Codex and Claude Code run model commands inside a bubblewrap (`bwrap`) sandbox
+built from user namespaces. Ubuntu 24.04 restricts those to programs with an
+AppArmor profile that allows them
+(`kernel.apparmor_restrict_unprivileged_userns = 1`); without one every
+sandboxed command fails with "Operation not permitted" and the client asks to
+rerun it unsandboxed. `scripts/install-sandbox-dependency.sh` (run by the
+installer; `ARKEY_SKIP_SANDBOX_INSTALL=1` skips it) installs
+`/etc/apparmor.d/arkey-bwrap`, which allows user namespaces for the root-owned
+system `bwrap` and nothing else, then proves bwrap can create one. It needs
+`sudo -n`, does nothing where namespaces are unrestricted, and defers to the
+distribution's `bwrap-userns-restrict` profile where that exists. Claude Code's
+sandbox also needs `socat`. Kimi and Crush ask for approval in-app and do not
+sandbox through bwrap.
+
+Arkey launches Codex with `--sandbox workspace-write` only as a default: any
+sandbox or approval flag in the launch arguments, a profile, or `sandbox_mode` /
+`default_permissions` in `~/.codex-moonbridge/config.toml` replaces it, and
+Codex's `/permissions` choice applies for the session.
 
 The implemented architecture and remaining compatibility-cutover work are
 defined in

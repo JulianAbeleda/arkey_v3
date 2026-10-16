@@ -41,6 +41,9 @@ fi
 if [[ "${ARKEY_SKIP_BRAVE_SEARCH_INSTALL:-0}" != 1 ]]; then
   "$repo_root/scripts/install-brave-search-dependency.sh"
 fi
+if [[ "${ARKEY_SKIP_SANDBOX_INSTALL:-0}" != 1 ]]; then
+  "$repo_root/scripts/install-sandbox-dependency.sh"
+fi
 if [[ "${ARKEY_SKIP_CLIENT_SNAPSHOTS:-0}" != 1 ]]; then
   "$repo_root/scripts/snapshot-clients.sh"
 fi

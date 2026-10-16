@@ -1,0 +1,20 @@
+# Installed by Arkey (scripts/install-sandbox-dependency.sh).
+#
+# Ubuntu 24.04 restricts unprivileged user namespaces
+# (kernel.apparmor_restrict_unprivileged_userns = 1) to programs whose
+# AppArmor profile grants `userns`. bubblewrap builds its sandbox from user
+# namespaces, so without this every sandboxed command from Codex or Claude
+# Code fails with "Operation not permitted" and each one falls back to an
+# approval prompt. Like Ubuntu's own flatpak profile, this allows everything
+# else and only names the program; what runs inside bwrap stays confined by
+# the namespaces, seccomp and mounts the client asked bwrap for.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile arkey-bwrap @BWRAP@ flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/arkey-bwrap>
+}
