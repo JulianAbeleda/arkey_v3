@@ -89,3 +89,49 @@ func HFModelType(path string) (string, error) {
 	}
 	return cfg.ModelType, nil
 }
+
+// TensorParallelSize is the largest split no larger than gpus that the
+// checkpoint's attention layout allows. vLLM shards attention heads across
+// devices, so every head count must divide evenly; key/value heads may
+// instead be fewer than the split, in which case vLLM replicates them. Linear
+// attention heads (Qwen3.5-family Gated DeltaNet) shard the same way. An
+// unreadable config gives 1, so a checkpoint vLLM cannot split still loads.
+func TensorParallelSize(path string, gpus int) int {
+	if gpus <= 1 {
+		return 1
+	}
+	b, err := os.ReadFile(filepath.Join(path, "config.json"))
+	if err != nil {
+		return 1
+	}
+	type heads struct {
+		Attention   int `json:"num_attention_heads"`
+		KeyValue    int `json:"num_key_value_heads"`
+		LinearKey   int `json:"linear_num_key_heads"`
+		LinearValue int `json:"linear_num_value_heads"`
+	}
+	var cfg struct {
+		heads
+		Text *heads `json:"text_config"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return 1
+	}
+	h := cfg.heads
+	if cfg.Text != nil && cfg.Text.Attention > 0 {
+		h = *cfg.Text
+	}
+	if h.Attention < 1 {
+		return 1
+	}
+	for n := gpus; n > 1; n-- {
+		if h.Attention%n != 0 || h.LinearKey%n != 0 || h.LinearValue%n != 0 {
+			continue
+		}
+		if h.KeyValue > 0 && h.KeyValue%n != 0 && n%h.KeyValue != 0 {
+			continue
+		}
+		return n
+	}
+	return 1
+}

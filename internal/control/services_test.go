@@ -390,7 +390,7 @@ func TestLocalRuntimeDescriptorUsesCentralConfigWithoutChangingSelectedRoute(t *
 	if descriptor.Schema != "arkey.local-runtime.v1" || descriptor.Origin != "http://127.0.0.1:8099" || descriptor.Model != "arkey-local" || descriptor.ContextSize != 16384 {
 		t.Fatalf("unexpected descriptor: %+v", descriptor)
 	}
-	runtime := runtimeConfig(cfg, s.Paths, 16384)
+	runtime := runtimeConfig(cfg, s.Paths, 16384, 0)
 	if descriptor.SlotsPath != runtime.SlotsPath || s.config.Mode != "server" {
 		t.Fatal("descriptor diverged from launch or changed the selected route")
 	}

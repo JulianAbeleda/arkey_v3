@@ -428,3 +428,30 @@ func TestRepeatedSharedEnsureReusesProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestLlamaPinsTheGPUsContextWasSizedFor(t *testing.T) {
+	c := cfg()
+	if got := strings.Join(llamaArgs(c), " "); strings.Contains(got, "--device") {
+		t.Fatal("no GPU count must leave device choice to llama-server:", got)
+	}
+	c.GPUs = 2
+	if got := strings.Join(llamaArgs(c), " "); !strings.Contains(got, "--device CUDA0,CUDA1") {
+		t.Fatal(got)
+	}
+	c.Vendor, c.GPUs = "amd", 1
+	if got := strings.Join(llamaArgs(c), " "); !strings.Contains(got, "--device ROCm0") || strings.Contains(got, "ROCm1") {
+		t.Fatal(got)
+	}
+	c.Vendor = "metal"
+	if got := strings.Join(llamaArgs(c), " "); strings.Contains(got, "--device") {
+		t.Fatal(got)
+	}
+}
+
+func TestChangingGPUCountRelaunches(t *testing.T) {
+	a, b := cfg(), cfg()
+	b.GPUs = 2
+	if sameLaunchConfig(a, b) {
+		t.Fatal("a different GPU split must not reuse the running process")
+	}
+}

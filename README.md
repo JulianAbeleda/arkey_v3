@@ -89,6 +89,20 @@ leaving its larger default reserve can make it request the entire context as
 output. The same calculation applies to every engine and model. The reasoning
 label such as `medium` is a separate setting.
 
+### Multiple GPUs
+
+`local.gpus = 0` (the default) splits a local model across every GPU the hardware
+scan finds, for both engines; a positive value caps the count, and `1` keeps a model
+on the first GPU. vLLM receives `--tensor-parallel-size`, reduced if needed to the
+largest count that divides the checkpoint's attention heads; an explicit
+`--tensor-parallel-size` in `vllm_args` wins. llama.cpp is pinned to the same
+devices with `--device` (`ROCm0,ROCm1`, `CUDA0,CUDA1`, ...), and its derived context
+is sized against those devices' pooled VRAM, counted at the smallest card's size
+because a split fills every card equally. Changing the count relaunches the engine.
+On two Radeon AI PRO R9700s, Qwen3.8-27B AWQ under vLLM went from a 130,928-token
+auto-fit window at 29-31 tok/s on one card to the full 262,144 at 46-53 tok/s on
+two.
+
 ## Shared local inference
 
 Arkey owns the local llama-server used by both GameTerm and the coding
@@ -275,6 +289,7 @@ vllm_reasoning_effort = "medium"
 vllm_memory_mib = 24576
 vllm_args = []
 vllm_environment = {} # optional CUDA/cache/build-guard environment
+gpus = 0 # split across every detected GPU; a positive value caps it
 ```
 
 The UI saves the chosen directory as `vllm_checkpoint`; the previous GGUF selection

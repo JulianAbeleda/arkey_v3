@@ -512,7 +512,7 @@ func (s *Services) LocalRuntime(ctx context.Context, ensure bool) (LocalRuntime,
 	if cfg.Local.Model == "" {
 		return LocalRuntime{}, errors.New("no local GGUF is selected; select one in Arkey")
 	}
-	runtime := runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))
+	runtime := runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg), s.localGPUs(ctx, cfg))
 	descriptor := LocalRuntime{Schema: "arkey.local-runtime.v1", Origin: fmt.Sprintf("http://127.0.0.1:%d", runtime.Port), Model: "arkey-local", ContextSize: runtime.ContextSize, SlotsPath: runtime.SlotsPath}
 	if ensure {
 		if _, rollback, err := s.Runtime.Start(ctx, runtime); err != nil {
@@ -727,8 +727,35 @@ func localSlots(paths platform.Paths, model string, contextSize int) string {
 	return filepath.Join(paths.LocalStateDir(), "slots", fmt.Sprintf("%x", digest[:12]))
 }
 
-func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize int) arkeyruntime.Config {
-	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), SlotsPath: localSlots(paths, cfg.Local.Model, contextSize), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths)}
+func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize, gpus int) arkeyruntime.Config {
+	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), SlotsPath: localSlots(paths, cfg.Local.Model, contextSize), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths), GPUs: gpus}
+}
+
+// gpuCount is how many GPUs a local model is split across: every GPU the scan
+// found, capped by local.gpus when that is set.
+func gpuCount(cfg config.Config, detected gpu.Result) int {
+	n := max(detected.Count, 1)
+	if cfg.Local.GPUs > 0 {
+		n = min(n, cfg.Local.GPUs)
+	}
+	return n
+}
+
+// localGPUs scans the hardware for gpuCount. Zero means the scan failed, which
+// leaves device choice to the engine's own default.
+func (s *Services) localGPUs(ctx context.Context, cfg config.Config) int {
+	model := cfg.Local.Model
+	if cfg.Local.Runtime == "vllm" {
+		model = cfg.Local.VLLMCheckpoint
+	}
+	if model == "" {
+		return 0
+	}
+	detected, err := s.Detector.Detect(ctx)
+	if err != nil || detected.Count < 1 {
+		return 0
+	}
+	return gpuCount(cfg, detected)
 }
 
 // qwen35 ships a chat template whose assistant branch renders prior tool-call
@@ -778,7 +805,8 @@ func (s *Services) localContextSize(ctx context.Context, cfg config.Config) int 
 	if err != nil {
 		return fallbackContextSize
 	}
-	if n := models.DeriveContextSizeForModel(cfg.Local.Model, detected.TotalVRAMBytes, arkeyruntime.KVCacheBytesPerElement, detected.Unified); n > 0 {
+	vram := detected.PooledVRAMBytes(gpuCount(cfg, detected))
+	if n := models.DeriveContextSizeForModel(cfg.Local.Model, vram, arkeyruntime.KVCacheBytesPerElement, detected.Unified); n > 0 {
 		return n
 	}
 	return fallbackContextSize
@@ -878,7 +906,7 @@ func (s *Services) writeLocalMetadata(ctx context.Context, cfg config.Config) (e
 
 func (s *Services) runtimeConfig(ctx context.Context, cfg config.Config) arkeyruntime.Config {
 	if cfg.Local.Runtime != "vllm" {
-		return runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg))
+		return runtimeConfig(cfg, s.Paths, s.localContextSize(ctx, cfg), s.localGPUs(ctx, cfg))
 	}
 	python := cfg.Local.VLLMPython
 	if resolved, err := exec.LookPath(python); err == nil {
@@ -886,7 +914,7 @@ func (s *Services) runtimeConfig(ctx context.Context, cfg config.Config) arkeyru
 	}
 	return arkeyruntime.Config{Engine: "vllm", Server: python, Model: cfg.Local.VLLMCheckpoint, Vendor: cfg.Hardware.Vendor,
 		Port: config.VLLMPort(cfg.Local.VLLMURL), ContextSize: cfg.Local.VLLMContextSize, LogPath: filepath.Join(s.Paths.LogsDir(), "vllm.log"),
-		ServedModel: cfg.Local.VLLMModel, Environment: cfg.Local.VLLMEnvironment, ExtraArgs: cfg.Local.VLLMArgs}
+		ServedModel: cfg.Local.VLLMModel, Environment: cfg.Local.VLLMEnvironment, ExtraArgs: cfg.Local.VLLMArgs, GPUs: s.localGPUs(ctx, cfg)}
 }
 
 func (s *Services) configForRoute(model string) config.Config {

@@ -70,3 +70,32 @@ func TestVLLMAutoContextDelegatesToEngine(t *testing.T) {
 		t.Fatalf("%d %v", n, err)
 	}
 }
+
+// Qwen3.8-27B's layout: 24 attention heads, 4 key/value heads, 16 and 48
+// linear-attention heads.
+const qwen27BConfig = `{"model_type":"qwen3_5","text_config":{"num_attention_heads":24,"num_key_value_heads":4,"linear_num_key_heads":16,"linear_num_value_heads":48}}`
+
+func TestVLLMSplitsAcrossDetectedGPUs(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "config.json"), []byte(qwen27BConfig), 0600)
+	c := Config{Model: dir, GPUs: 2}
+	if args := strings.Join(VLLMArgs(c), " "); !strings.Contains(args, "--tensor-parallel-size 2") {
+		t.Fatal(args)
+	}
+	// Three GPUs divide the 24 attention heads but not the 16 linear key
+	// heads, so the split falls back to the largest size that fits: two.
+	c.GPUs = 3
+	if args := strings.Join(VLLMArgs(c), " "); !strings.Contains(args, "--tensor-parallel-size 2") {
+		t.Fatal(args)
+	}
+	for _, gpus := range []int{0, 1} {
+		c.GPUs = gpus
+		if args := strings.Join(VLLMArgs(c), " "); strings.Contains(args, "--tensor-parallel-size") {
+			t.Fatalf("%d GPUs: %s", gpus, args)
+		}
+	}
+	c.GPUs, c.ExtraArgs = 2, []string{"--tensor-parallel-size=1"}
+	if args := strings.Join(VLLMArgs(c), " "); strings.Count(args, "--tensor-parallel-size") != 1 {
+		t.Fatal("operator split must replace the automatic one:", args)
+	}
+}

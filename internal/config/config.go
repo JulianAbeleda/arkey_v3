@@ -48,6 +48,9 @@ type Local struct {
 	LlamaServer         string `toml:"llama_server"`
 	Port                int    `toml:"port"`
 	ContextSize         int    `toml:"context_size"`
+	// GPUs is how many GPUs a local model is split across, for both engines.
+	// Zero uses every GPU the hardware scan finds; a positive value caps it.
+	GPUs int `toml:"gpus"`
 }
 
 // Server is the selected llama.cpp server on the network (mode "server"): a
@@ -161,6 +164,9 @@ func (c Config) Validate() error {
 	// always a mistake.
 	if c.Local.ContextSize < 0 {
 		return errors.New("invalid context size")
+	}
+	if c.Local.GPUs < 0 {
+		return errors.New("invalid gpus: use 0 for every detected GPU, or a positive count")
 	}
 	if c.Local.Model != "" {
 		i, e := os.Stat(c.Local.Model)

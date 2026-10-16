@@ -143,3 +143,17 @@ func TestServerModeNeedsAValidOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestGPUsDefaultsToAutoAndRejectsNegative(t *testing.T) {
+	c, err := Decode([]byte("version = 1\nmode = 'frontier'\n[local]\ngpus = 2\n"), t.TempDir())
+	if err != nil || c.Local.GPUs != 2 {
+		t.Fatalf("%v %d", err, c.Local.GPUs)
+	}
+	if Default(t.TempDir()).Local.GPUs != 0 {
+		t.Fatal("default must be 0 (every detected GPU)")
+	}
+	c.Local.GPUs = -1
+	if c.Validate() == nil {
+		t.Fatal("negative gpus accepted")
+	}
+}

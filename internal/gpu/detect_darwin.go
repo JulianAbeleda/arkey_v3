@@ -9,7 +9,7 @@ func detectPlatform(ctx context.Context, r Runner) (Result, error) {
 	b, err := r.Run(ctx, "sysctl", "-n", "machdep.cpu.brand_string")
 	name := strings.TrimSpace(string(b))
 	if err != nil || !strings.HasPrefix(name, "Apple ") {
-		return Result{Unknown, "No supported GPU", 0, false}, nil
+		return Result{Vendor: Unknown, Name: "No supported GPU"}, nil
 	}
 	// Unified memory is shared with the OS and applications, not dedicated
 	// VRAM, so it is reported as what it is rather than as zero. Zero meant
@@ -21,9 +21,9 @@ func detectPlatform(ctx context.Context, r Runner) (Result, error) {
 	b, err = r.Run(ctx, "sysctl", "-n", "hw.memsize")
 	total, ok := parseIntLoose(string(b))
 	if err != nil || !ok || total < 1 {
-		return Result{Metal, name, 0, false}, nil
+		return Result{Vendor: Metal, Name: name, Count: 1}, nil
 	}
-	return Result{Metal, name, total, true}, nil
+	return Result{Vendor: Metal, Name: name, TotalVRAMBytes: total, Unified: true, Count: 1, DeviceVRAMBytes: []int64{total}}, nil
 }
 
 // DeviceInspector asks llama itself, including dynamically loaded backends.

@@ -51,7 +51,23 @@ func llamaArgs(c Config) []string {
 	if c.ChatTemplate != "" {
 		args = append(args, "--chat-template-file", c.ChatTemplate)
 	}
-	return args
+	return append(args, llamaDevices(c)...)
+}
+
+// llamaDevices pins llama-server to the first GPUs devices. Its default
+// already splits layers across every visible GPU; naming them keeps the split
+// matched to the count context sizing assumed, including a cap below the
+// number installed.
+func llamaDevices(c Config) []string {
+	prefix := map[string]string{"amd": "ROCm", "nvidia": "CUDA"}[c.Vendor]
+	if c.GPUs < 1 || prefix == "" {
+		return nil
+	}
+	devices := make([]string, c.GPUs)
+	for i := range devices {
+		devices[i] = fmt.Sprintf("%s%d", prefix, i)
+	}
+	return []string{"--device", strings.Join(devices, ",")}
 }
 
 func recognizeLlama(ctx context.Context, inspector Inspector, pid int, base State) (Process, string, error) {

@@ -55,6 +55,12 @@ func VLLMArgs(c Config) []string {
 			args = append(args, "--default-chat-template-kwargs", `{"enable_thinking":false}`)
 		}
 	}
+	// Split across devices unless the operator chose a split in vllm_args.
+	if !hasOption(c.ExtraArgs, "--tensor-parallel-size") && !hasOption(c.ExtraArgs, "-tp") {
+		if n := models.TensorParallelSize(c.Model, c.GPUs); n > 1 {
+			args = append(args, "--tensor-parallel-size", strconv.Itoa(n))
+		}
+	}
 	return append(args, c.ExtraArgs...)
 }
 func hasOption(args []string, key string) bool {

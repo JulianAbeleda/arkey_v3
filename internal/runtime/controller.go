@@ -37,6 +37,9 @@ type Config struct {
 	// llamaArgs.
 	ChatTemplate string
 	SlotsPath    string
+	// GPUs is how many devices the model is split across. Zero leaves device
+	// choice to the engine's own default.
+	GPUs int `json:"gpus,omitempty"`
 }
 
 // State is persisted only after a complete successful start. StartTime prevents
@@ -594,7 +597,7 @@ type realClock struct{}
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 func sameLaunchConfig(a, b Config) bool {
-	return a.Engine == b.Engine && a.Server == b.Server && a.Model == b.Model && a.Vendor == b.Vendor && a.Port == b.Port && a.ContextSize == b.ContextSize && a.LogPath == b.LogPath && a.ChatTemplate == b.ChatTemplate && a.SlotsPath == b.SlotsPath && a.ServedModel == b.ServedModel && maps.Equal(a.Environment, b.Environment) && slices.Equal(a.ExtraArgs, b.ExtraArgs)
+	return a.Engine == b.Engine && a.Server == b.Server && a.Model == b.Model && a.Vendor == b.Vendor && a.Port == b.Port && a.ContextSize == b.ContextSize && a.LogPath == b.LogPath && a.ChatTemplate == b.ChatTemplate && a.SlotsPath == b.SlotsPath && a.ServedModel == b.ServedModel && a.GPUs == b.GPUs && maps.Equal(a.Environment, b.Environment) && slices.Equal(a.ExtraArgs, b.ExtraArgs)
 }
 func launchConfigForState(s State, fallback Config) Config {
 	if s.LaunchConfig != nil {
