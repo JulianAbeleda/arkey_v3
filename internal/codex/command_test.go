@@ -1,7 +1,10 @@
 package codex
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,5 +182,54 @@ func TestInteractivePromptAndDelimiterAreNotCommands(t *testing.T) {
 		if got := configScope(args); !reflect.DeepEqual(got, args) {
 			t.Fatalf("changed prompt: %v", got)
 		}
+	}
+}
+
+// Arkey's workspace-write sandbox is a default. Any permission the operator
+// chose, on the command line or in the Codex home's config, replaces it.
+func TestBuildKeepsTheOperatorsPermissionChoice(t *testing.T) {
+	build := func(home string, args ...string) []string {
+		t.Helper()
+		parsed, err := cli.Parse(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := Build(BuildOptions{Parsed: parsed, Model: "m", Binary: "/bin/true", CodexHome: home})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan.Args
+	}
+	forced := func(args []string) bool { return slices.Contains(args, "workspace-write") }
+	if !forced(build("")) {
+		t.Fatal("no choice must keep the workspace-write default")
+	}
+	for _, choice := range [][]string{
+		{"--dangerously-bypass-approvals-and-sandbox"},
+		{"--sandbox", "danger-full-access"},
+		{"-s", "read-only"},
+		{"--sandbox=read-only"},
+		{"--approve-for-me"},
+		{"-p", "full"},
+		{"-c", `sandbox_mode="danger-full-access"`},
+		{"--config=default_permissions=\"disabled\""},
+	} {
+		args := build("", choice...)
+		if forced(args) {
+			t.Fatalf("%v: Arkey forced its sandbox anyway: %#v", choice, args)
+		}
+	}
+	// Prompt text after -- is never read as a flag.
+	if !forced(build("", "--", "--sandbox")) {
+		t.Fatal("prompt text was read as a permission choice")
+	}
+	home := t.TempDir()
+	os.WriteFile(filepath.Join(home, "config.toml"), []byte("sandbox_mode = \"danger-full-access\"\napproval_policy = \"never\"\n"), 0600)
+	if forced(build(home)) {
+		t.Fatal("sandbox_mode in the Codex config was overridden")
+	}
+	os.WriteFile(filepath.Join(home, "config.toml"), []byte("approval_policy = \"never\"\n"), 0600)
+	if !forced(build(home)) {
+		t.Fatal("an approval policy alone picks no sandbox; the default must stay")
 	}
 }

@@ -2,11 +2,14 @@ package codex
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/JulianAbeleda/arkey_v3/internal/cli"
 	"github.com/JulianAbeleda/arkey_v3/internal/client"
+	"github.com/pelletier/go-toml/v2"
 )
 
 const MoonBridgeProvider = `model_provider="moonbridge"`
@@ -52,7 +55,9 @@ func Build(opts BuildOptions) (Plan, error) {
 	if opts.ReasoningEffort != "" && !hasClientArg(opts.Parsed.ClientArgs, "model_reasoning_effort") {
 		args = append([]string{"-c", fmt.Sprintf("model_reasoning_effort=%q", opts.ReasoningEffort)}, args...)
 	}
-	args = append([]string{"--sandbox", "workspace-write"}, args...)
+	if !choosesPermissions(opts.Parsed.ClientArgs) && !configChoosesPermissions(opts.CodexHome) {
+		args = append([]string{"--sandbox", "workspace-write"}, args...)
+	}
 	args = configScope(args)
 
 	env := append([]string(nil), opts.Environment...)
@@ -86,6 +91,65 @@ func DefaultBinary(home string) string {
 
 func DefaultHome(home string) string {
 	return filepath.Join(home, ".codex-moonbridge")
+}
+
+// permissionFlags select Codex's sandbox or approval mode on the command line.
+// A profile counts because its layer may set either.
+var permissionFlags = []string{"-s", "--sandbox", "--dangerously-bypass-approvals-and-sandbox", "--approve-for-me", "-p", "--profile"}
+
+// permissionKeys are the config keys that pick a sandbox: the legacy
+// sandbox_mode and the permission-profile default_permissions.
+var permissionKeys = []string{"sandbox_mode", "default_permissions"}
+
+// choosesPermissions reports whether the operator picked permissions for this
+// launch. Arkey's workspace-write sandbox is only a default: a forced
+// --sandbox would override the operator's choice and, with
+// --dangerously-bypass-approvals-and-sandbox, conflict with it.
+func choosesPermissions(args []string) bool {
+	for i, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		for _, flag := range permissionFlags {
+			if arg == flag || strings.HasPrefix(arg, flag+"=") {
+				return true
+			}
+		}
+		if (arg == "-c" || arg == "--config") && i+1 < len(args) && isPermissionKey(args[i+1]) {
+			return true
+		}
+		if value, ok := strings.CutPrefix(arg, "--config="); ok && isPermissionKey(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPermissionKey(override string) bool {
+	key, _, _ := strings.Cut(override, "=")
+	return slices.Contains(permissionKeys, strings.TrimSpace(key))
+}
+
+// configChoosesPermissions reports whether the Codex home's config.toml sets
+// a sandbox, so a Full Access choice saved there is not reset each launch.
+func configChoosesPermissions(codexHome string) bool {
+	if codexHome == "" {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	if err != nil || len(b) > 1<<20 {
+		return false
+	}
+	cfg := map[string]any{}
+	if toml.Unmarshal(b, &cfg) != nil {
+		return false
+	}
+	for _, key := range permissionKeys {
+		if _, ok := cfg[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func hasClientArg(args []string, key string) bool {
