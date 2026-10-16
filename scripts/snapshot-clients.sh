@@ -49,6 +49,18 @@ snapshot_client() (
   if [[ "$name" == "crush" && "${resolved##*/}" == "run-crush.js" ]]; then
     resolved="$(readlink -f -- "${resolved%/*}/bin/crush")"
   fi
+  # Codex's npm command is likewise a JS launcher (bin/codex.js) that execs a
+  # native binary from a per-platform optional dependency. Copying the launcher
+  # alone leaves a snapshot that cannot import its own package.
+  if [[ "$name" == "codex" && "${resolved##*/}" == "codex.js" ]]; then
+    local native
+    native="$(compgen -G "${resolved%/bin/codex.js}/node_modules/@openai/codex-*/vendor/*/bin/codex" | head -n 1)" || native=""
+    if [[ -z "$native" ]]; then
+      echo "Official codex client is an npm launcher without its native binary: $source" >&2
+      return 1
+    fi
+    resolved="$(readlink -f -- "$native")"
+  fi
   if [[ -z "$resolved" || ! -f "$resolved" || ! -x "$resolved" ]]; then
     echo "Official $name client is not a regular executable: $source" >&2
     return 1
