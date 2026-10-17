@@ -28,6 +28,14 @@ type Config struct {
 	MoonBridge MoonBridge    `toml:"moonbridge"`
 	UI         UI            `toml:"ui"`
 	GUI        GUI           `toml:"gui"`
+	Harness    Harness       `toml:"harness"`
+}
+
+// Harness is the shared harness every Arkey TUI loads: DeepSeekMCP registers
+// `arkey harness-mcp` in each client's MCP config at launch. It runs from the
+// DeepSeek Harness checkout named in [gui].
+type Harness struct {
+	DeepSeekMCP bool `toml:"deepseek_mcp"`
 }
 
 // GUI names the browser front ends the GUI menu can start.
@@ -99,7 +107,7 @@ type UI struct {
 
 func Default(home string) Config {
 	d := filepath.Join(home, ".config", "arkey")
-	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMPython: "python3", VLLMModelDirs: []string{filepath.Join(home, "models")}, VLLMMemoryMiB: 24576, VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 0, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}, GUI: GUI{DeepSeekHarness: filepath.Join(home, "deepseek-harness")}}
+	return Config{Version: 1, Client: "codex", Mode: "frontier", Frontier: Frontier{"deepseek"}, Local: Local{Runtime: "llama", VLLMPython: "python3", VLLMModelDirs: []string{filepath.Join(home, "models")}, VLLMMemoryMiB: 24576, VLLMURL: "http://127.0.0.1:8000", VLLMModel: "arkey-local-vllm", VLLMContextSize: 0, VLLMReasoningEffort: "medium", Port: 8080, ContextSize: 32768}, Hardware: Hardware{Vendor: "unknown"}, MoonBridge: MoonBridge{Address: "127.0.0.1:38440", Config: filepath.Join(d, "moonbridge.yml")}, GUI: GUI{DeepSeekHarness: filepath.Join(home, "deepseek-harness")}, Harness: Harness{DeepSeekMCP: true}}
 }
 func (c Config) Validate() error {
 	if c.Version != CurrentVersion {

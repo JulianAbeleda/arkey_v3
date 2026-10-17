@@ -54,6 +54,10 @@ Config
     Codex
     Claude
   GPU Auto-scan
+GUI
+  DeepSeek Harness (web UI)
+Harness
+  DeepSeek MCP   shared harness all TUIs use · Enter turns it on or off
 Exit
 ```
 
@@ -134,6 +138,39 @@ deepseek_harness = "/path/to/deepseek-harness"
 It needs Node 22.19 or newer and an installed workspace (`pnpm install`). The
 provider's credential is a placeholder, `ARKEY_LOCAL_API_KEY`, set by Arkey at
 launch; the gateway checks none.
+
+## Harness: DeepSeek MCP
+
+**Boot → 4 Harness → DeepSeek MCP** is a shared harness every Arkey TUI
+loads beside its own. It is on by default; Enter turns it off or on again for
+every later launch (`[harness] deepseek_mcp` in `config.toml`).
+
+While it is on, each Codex, Kimi and Crush launch registers one MCP server,
+`deepseek-mcp`, in that client's isolated home, and removes it while it is
+off. Other MCP servers there are kept:
+
+| Client | Entry |
+|---|---|
+| Codex | `[mcp_servers.deepseek-mcp]` in `~/.codex-moonbridge/config.toml` |
+| Kimi | `mcpServers.deepseek-mcp` in `~/.kimi-arkey/mcp.json` |
+| Crush | `mcp.deepseek-mcp` in the pinned `crush.json` |
+
+The server is `arkey harness-mcp`, started by the client over stdio. Its one
+tool, `deepseek_harness`, takes a `task` (and optionally a `session_id` from an
+earlier call) and runs it as `dsh headless` in the client's working directory,
+on the local model through the gateway. It returns the agent's final answer
+and its `session_id`. The client's own permission rules decide whether the
+call needs your approval; inside DeepSeek Harness, anything that would need an
+approval is refused, because nobody is there to give one. One task may run 15
+minutes.
+
+The provider is the same `arkey-local` route the GUI uses, written to an
+Arkey-owned patch (`~/.local/state/arkey/dsh/harness.patch.yml`) passed with
+`--patch`, so the operator's own dsh profiles are not touched. The gateway
+serves local engines only: on a local route Arkey starts it when missing; on a
+server or frontier route the harness loads only while a local engine already
+answers on `127.0.0.1:8090`, and Arkey says so at launch when it does not.
+Claude is not wired yet, as its client is not launchable.
 
 ## Shared local inference
 

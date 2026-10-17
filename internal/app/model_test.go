@@ -12,10 +12,10 @@ import (
 func TestNavigationStackAndWrapping(t *testing.T) {
 	m := New(nil)
 	m.move(-1)
-	if got := m.Cursor(); got != 3 {
-		t.Fatalf("wrap up = %d, want 3", got)
+	if got := m.Cursor(); got != 4 {
+		t.Fatalf("wrap up = %d, want 4", got)
 	}
-	m.activate() // Exit is cursor 3, reset to Config exercise.
+	m.activate() // Exit is cursor 4, reset to Config exercise.
 	m.cursors[mainScreen] = 1
 	m.activate()
 	if got := m.ScreenName(); got != "CONFIG" {
@@ -285,12 +285,12 @@ func TestConfigOffersServerAndTheServerScreenListsEntries(t *testing.T) {
 	}
 }
 
-// GUI sits between Config and Exit, so 1 TUI and 2 Config keep their keys.
-// Its one row serves DeepSeek Harness once the checkout is ready.
+// GUI and Harness sit between Config and Exit, so 1 TUI and 2 Config keep
+// their keys. GUI's one row serves DeepSeek Harness once the checkout is ready.
 func TestGUIScreenLaunchesDeepSeekHarnessWhenReady(t *testing.T) {
 	m := New(nil)
 	main := m.items()
-	if len(main) != 4 || main[0].Label != "TUI" || main[1].Label != "Config" || main[2].Label != "GUI" || main[3].Label != "Exit" {
+	if len(main) != 5 || main[0].Label != "TUI" || main[1].Label != "Config" || main[2].Label != "GUI" || main[3].Label != "Harness" || main[4].Label != "Exit" {
 		t.Fatalf("boot items = %+v", main)
 	}
 	m.cursors[mainScreen] = 2
@@ -310,5 +310,47 @@ func TestGUIScreenLaunchesDeepSeekHarnessWhenReady(t *testing.T) {
 	}
 	if plan := m.LaunchPlan(); plan == nil || plan.GUI != "deepseek-harness" || plan.Client != "" {
 		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+type harnessServices struct {
+	NopServices
+	toggled []string
+}
+
+func (h *harnessServices) ToggleHarness(_ context.Context, name string) (Status, error) {
+	h.toggled = append(h.toggled, name)
+	return Status{Harnesses: map[string]string{name: "off"}}, nil
+}
+
+// Harness is its own section: Enter on DeepSeek MCP switches the shared
+// harness for every TUI and stays on the screen; it never launches anything.
+func TestHarnessScreenTogglesDeepSeekMCP(t *testing.T) {
+	services := &harnessServices{}
+	m := New(services)
+	m.status.Harnesses = map[string]string{"deepseek-mcp": "on"}
+	if got := m.items()[3]; got.Label != "Harness" || got.State != "DeepSeek MCP" {
+		t.Fatalf("main harness row = %+v", got)
+	}
+	m.cursors[mainScreen] = 3
+	m.activate()
+	if got := m.ScreenName(); got != "HARNESS" {
+		t.Fatalf("screen = %q", got)
+	}
+	items := m.items()
+	if len(items) != 1 || items[0].Label != "DeepSeek MCP" || items[0].State != "on" || !strings.Contains(items[0].Detail, "shared harness all TUIs use") {
+		t.Fatalf("harness items = %+v", items)
+	}
+	cmd := m.activate()
+	if cmd == nil || !m.busy {
+		t.Fatal("Enter must start the toggle")
+	}
+	got, _ := m.Update(harnessToggledMsg{generation: m.generation, status: Status{Harnesses: map[string]string{"deepseek-mcp": "off"}}})
+	updated := got.(Model)
+	if updated.busy || updated.harnessState("deepseek-mcp") != "off" || !strings.Contains(updated.notice, "off") || updated.LaunchPlan() != nil {
+		t.Fatalf("after toggle: busy=%v state=%q notice=%q", updated.busy, updated.harnessState("deepseek-mcp"), updated.notice)
+	}
+	if updated.items()[0].State != "off" || updated.ScreenName() != "HARNESS" {
+		t.Fatal("the toggle must stay on the Harness screen")
 	}
 }

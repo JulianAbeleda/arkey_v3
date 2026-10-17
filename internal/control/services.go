@@ -179,8 +179,9 @@ func (s *Services) Refresh(ctx context.Context) (app.Status, error) {
 			"codex": executableStatus(s.CodexBinary), "claude": claudeStatus,
 			"kimi": executableStatus(s.KimiBinary), "crush": executableStatus(s.CrushBinary),
 		},
-		GUIs:  s.guiStatus(),
-		Route: app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model, ServerLabel: cfg.Server.Label, ServerOrigin: cfg.Server.Origin, ServerModel: cfg.Server.Model},
+		GUIs:      s.guiStatus(),
+		Harnesses: s.harnessStatus(),
+		Route:     app.Route{Mode: cfg.Mode, Backend: cfg.Frontier.Backend, Model: selectedModel(cfg), LocalRuntime: cfg.Local.Runtime, LocalModel: cfg.Local.Model, ServerLabel: cfg.Server.Label, ServerOrigin: cfg.Server.Origin, ServerModel: cfg.Server.Model},
 	}
 	status.GPU = s.gpuSummary(ctx, cfg)
 	status.Servers = s.serverSummaries(cfg)

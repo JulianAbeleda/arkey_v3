@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/JulianAbeleda/arkey_v3/internal/harness"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -36,23 +37,9 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, modelCatalog string) error {
 	if err := platform.RejectSymlinkComponents(path); err != nil {
 		return err
 	}
-	cfg := map[string]any{}
-	if info, statErr := os.Lstat(path); statErr == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("Codex config must be a regular file")
-		}
-		if info.Size() > 1<<20 {
-			return errors.New("Codex config exceeds 1 MiB safety limit")
-		}
-		existing, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		if len(existing) > 0 {
-			if err := toml.Unmarshal(existing, &cfg); err != nil {
-				return err
-			}
-		}
+	cfg, err := read(path)
+	if err != nil {
+		return err
 	}
 	providers, _ := cfg["model_providers"].(map[string]any)
 	if providers == nil {
@@ -74,6 +61,75 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, modelCatalog string) error {
 	if modelCatalog != "" {
 		cfg["model_catalog_json"] = modelCatalog
 	}
+	_ = bridgeToken
+	return write(path, cfg)
+}
+
+// SetMCPServer registers server as [mcp_servers.<name>] in the isolated
+// Codex home, or removes that table when server is nil. Other MCP servers
+// and settings are kept.
+func SetMCPServer(stateHome, name string, server *harness.Server) error {
+	if err := platform.EnsurePrivateDir(stateHome); err != nil {
+		return err
+	}
+	path := filepath.Join(stateHome, "config.toml")
+	if err := platform.RejectSymlinkComponents(path); err != nil {
+		return err
+	}
+	cfg, err := read(path)
+	if err != nil {
+		return err
+	}
+	servers, _ := cfg["mcp_servers"].(map[string]any)
+	if server == nil {
+		if _, ok := servers[name]; !ok {
+			return nil
+		}
+		delete(servers, name)
+		return write(path, cfg)
+	}
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers[name] = map[string]any{
+		"command":             server.Command,
+		"args":                server.Args,
+		"startup_timeout_sec": int(harness.StartupTimeout.Seconds()),
+		"tool_timeout_sec":    int(harness.ToolTimeout.Seconds()),
+	}
+	cfg["mcp_servers"] = servers
+	return write(path, cfg)
+}
+
+// read loads the Arkey-owned config.toml; a missing file is an empty one.
+func read(path string) (map[string]any, error) {
+	cfg := map[string]any{}
+	info, statErr := os.Lstat(path)
+	if os.IsNotExist(statErr) {
+		return cfg, nil
+	}
+	if statErr != nil {
+		return nil, statErr
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("Codex config must be a regular file")
+	}
+	if info.Size() > 1<<20 {
+		return nil, errors.New("Codex config exceeds 1 MiB safety limit")
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > 0 {
+		if err := toml.Unmarshal(existing, &cfg); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
+}
+
+func write(path string, cfg map[string]any) error {
 	encoded, err := toml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -82,6 +138,5 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, modelCatalog string) error {
 	if err := os.WriteFile(temporary, encoded, 0o600); err != nil {
 		return err
 	}
-	_ = bridgeToken
 	return os.Rename(temporary, path)
 }

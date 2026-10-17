@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,36 @@ func Build(dir string, env []string, freePort bool) (Plan, error) {
 		env = client.SetEnv(env, KeyEnv, "arkey-local")
 	}
 	return Plan{Plan: client.Plan{Binary: node, Args: args, Env: env}, Dir: dir}, nil
+}
+
+// Headless is the exec of one `dsh headless --json` task from the checkout,
+// with patch layered over the headless profile. The task is read from stdin
+// (`-`), so a task that starts with a dash is never taken for a flag; a
+// session id continues that Session.
+func Headless(dir, patch, sessionID string, env []string) (client.Plan, error) {
+	if s := Status(dir); s != "ready" {
+		return client.Plan{}, fmt.Errorf("DeepSeek Harness at %s is %s", dir, s)
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return client.Plan{}, err
+	}
+	// The run's working directory is the client's workspace, not the
+	// checkout. tsx resolves both its loader and the tsconfig that maps the
+	// workspace packages from the working directory, so both are named in the
+	// checkout; otherwise the source imports resolve to stale builds or fail.
+	loader := (&url.URL{Scheme: "file", Path: filepath.Join(dir, "node_modules", "tsx", "dist", "esm", "index.mjs")}).String()
+	args := []string{"--import", loader, entry(dir), "headless", "--patch", patch, "--json"}
+	if sessionID != "" {
+		args = append(args, "--session-id", sessionID)
+	}
+	args = append(args, "-")
+	env = append([]string(nil), env...)
+	env = client.SetEnv(env, "TSX_TSCONFIG_PATH", filepath.Join(dir, "tsconfig.json"))
+	if !hasEnv(env, KeyEnv) {
+		env = client.SetEnv(env, KeyEnv, "arkey-local")
+	}
+	return client.Plan{Binary: node, Args: args, Env: env}, nil
 }
 
 func hasEnv(env []string, key string) bool {

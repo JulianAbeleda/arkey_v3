@@ -23,6 +23,7 @@ const (
 	frontierScreen
 	serverScreen
 	guiScreen
+	harnessScreen
 )
 
 // Model is the complete display state. Effects enter only through Services.
@@ -123,6 +124,14 @@ func (m Model) unloadLocal(parent context.Context, generation uint64) tea.Cmd {
 		defer cancel()
 		s, err := m.services.UnloadLocal(ctx)
 		return localUnloadedMsg{generation: generation, status: s, err: err}
+	}
+}
+func (m Model) toggleHarness(parent context.Context, generation uint64, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+		defer cancel()
+		s, err := m.services.ToggleHarness(ctx, name)
+		return harnessToggledMsg{generation: generation, status: s, err: err}
 	}
 }
 func (m Model) scanGPU(parent context.Context, generation uint64) tea.Cmd {
@@ -251,6 +260,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = x.status
 			m.notice = "Local model unloaded. Saved model selection is unchanged."
+		}
+	case harnessToggledMsg:
+		if x.generation != m.generation {
+			break
+		}
+		m.finishOperation()
+		if x.err != nil {
+			m.errText = x.err.Error()
+		} else {
+			m.status = x.status
+			m.notice = "DeepSeek MCP is " + strings.SplitN(m.harnessState("deepseek-mcp"), " ", 2)[0] + " for every TUI launch."
 		}
 	case gpuScannedMsg:
 		if x.generation != m.generation {
@@ -422,12 +442,17 @@ func (m *Model) activate() tea.Cmd {
 			m.push(configScreen)
 		} else if c == 2 {
 			m.push(guiScreen)
+		} else if c == 3 {
+			m.push(harnessScreen)
 		} else {
 			return tea.Quit
 		}
 	case guiScreen:
 		m.launch = &LaunchPlan{GUI: []string{"deepseek-harness"}[c]}
 		return tea.Quit
+	case harnessScreen:
+		generation, ctx := m.begin()
+		return tea.Batch(m.spinner.Tick, m.toggleHarness(ctx, generation, []string{"deepseek-mcp"}[c]))
 	case tuiScreen:
 		selected := m.selectedModel()
 		if selected == "" || selected == "arkey-local-" {
@@ -492,8 +517,11 @@ func (m Model) items() []ui.Item {
 			{Key: "1", Label: "TUI", Detail: "choose the modded harness", State: clientLabel(m.status.Client)},
 			{Key: "2", Label: "Config", Detail: "routes and hardware", State: m.status.Route.Model},
 			{Key: "3", Label: "GUI", Detail: "browser front ends on the local model", State: m.guiState()},
-			{Key: "4", Label: "Exit", Detail: "close Arkey", State: "quit"},
+			{Key: "4", Label: "Harness", Detail: "shared harness every TUI loads", State: m.harnessSummary()},
+			{Key: "5", Label: "Exit", Detail: "close Arkey", State: "quit"},
 		}
+	case harnessScreen:
+		return []ui.Item{{Key: "1", Label: "DeepSeek MCP", Detail: "shared harness all TUIs use · Enter turns it on or off", State: m.harnessState("deepseek-mcp")}}
 	case guiScreen:
 		return []ui.Item{m.guiItem("1", "deepseek-harness", "DeepSeek Harness (web UI)")}
 	case tuiScreen:
@@ -579,7 +607,7 @@ func (m Model) title() string {
 	if m.screen == modelsScreen {
 		return "LOCAL · " + strings.ToUpper(m.browsingRuntime()) + " · MODELS"
 	}
-	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER", "CONFIG · SERVER", "GUI"}[m.screen]
+	return []string{"BOOT", "TUI", "CONFIG", "CONFIG · LOCAL", "LOCAL · LLAMA · MODELS", "CONFIG · FRONTIER", "CONFIG · SERVER", "GUI", "HARNESS"}[m.screen]
 }
 func (m Model) subtitle() string {
 	switch m.screen {
@@ -591,6 +619,8 @@ func (m Model) subtitle() string {
 		return "Select a model to load. The active model is marked ● loaded."
 	case serverScreen:
 		return "Select the llama.cpp server the harness talks to through MoonBridge."
+	case harnessScreen:
+		return "A shared harness every Arkey TUI loads beside its own: Codex, Kimi and Crush get DeepSeek Harness as an MCP tool, on the local model through the gateway."
 	case guiScreen:
 		return "Opens in your browser, served from this terminal, on the local model through Arkey's OpenAI-compatible gateway."
 	}
@@ -603,6 +633,20 @@ func (m Model) guiItem(key, name, label string) ui.Item {
 		availability = "missing"
 	}
 	return ui.Item{Key: key, Label: label, Detail: "local model via gateway :8090", State: availability, Disabled: availability != "ready"}
+}
+
+func (m Model) harnessState(name string) string {
+	if v := m.status.Harnesses[name]; v != "" {
+		return v
+	}
+	return "off"
+}
+
+func (m Model) harnessSummary() string {
+	if strings.HasPrefix(m.harnessState("deepseek-mcp"), "on") {
+		return "DeepSeek MCP"
+	}
+	return "off"
 }
 
 func (m Model) guiState() string {

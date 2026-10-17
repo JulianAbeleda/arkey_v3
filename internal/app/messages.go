@@ -48,3 +48,8 @@ type gpuScannedMsg struct {
 	status     Status
 	err        error
 }
+type harnessToggledMsg struct {
+	generation uint64
+	status     Status
+	err        error
+}

@@ -22,12 +22,15 @@ type Status struct {
 	Client                              string
 	Clients                             map[string]string
 	GUIs                                map[string]string
-	Route                               Route
-	Servers                             []ServerSummary
-	LoadedModel                         string
-	LocalActive                         bool
-	LocalLoaded                         bool
-	ReducedMotion                       bool
+	// Harnesses is each shared harness entry's state: "on", "off", or "on"
+	// with why it cannot load yet.
+	Harnesses     map[string]string
+	Route         Route
+	Servers       []ServerSummary
+	LoadedModel   string
+	LocalActive   bool
+	LocalLoaded   bool
+	ReducedMotion bool
 }
 
 // ModelSummary is deliberately metadata-only: paths are never opened by the UI.
@@ -51,6 +54,8 @@ type Services interface {
 	ActivateLocal(context.Context, string, ModelSummary) (Status, error)
 	UnloadLocal(context.Context) (Status, error)
 	ScanGPU(context.Context) (Status, error)
+	// ToggleHarness switches a shared harness entry on or off for every TUI.
+	ToggleHarness(context.Context, string) (Status, error)
 }
 
 // NopServices makes the model useful in previews and tests before backends are wired.
@@ -66,3 +71,6 @@ func (NopServices) ActivateLocal(context.Context, string, ModelSummary) (Status,
 }
 func (NopServices) UnloadLocal(context.Context) (Status, error) { return Status{}, nil }
 func (NopServices) ScanGPU(context.Context) (Status, error)     { return Status{}, nil }
+func (NopServices) ToggleHarness(context.Context, string) (Status, error) {
+	return Status{}, nil
+}

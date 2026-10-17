@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/JulianAbeleda/arkey_v3/internal/harness"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 )
 
@@ -108,6 +109,56 @@ func WriteConfig(stateHome, bridgeURL, bridgeToken, model string, contextWindow,
 	}
 	data = append(data, '\n')
 	return writePrivate(path, data)
+}
+
+// SetMCPServer registers server as mcp.<name> in the isolated Crush config,
+// or removes it when server is nil. Run it after WriteConfig, which keeps the
+// mcp block as it finds it.
+func SetMCPServer(stateHome, name string, server *harness.Server) error {
+	path := ConfigPath(stateHome)
+	if err := platform.RejectSymlinkComponents(path); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("Crush config must be a regular file")
+	}
+	if info.Size() > 1<<20 {
+		return fmt.Errorf("Crush config exceeds 1 MiB safety limit")
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	config := map[string]any{}
+	if err := json.Unmarshal(existing, &config); err != nil {
+		return fmt.Errorf("read existing Crush config: %w", err)
+	}
+	servers, err := object(config, "mcp")
+	if err != nil {
+		return err
+	}
+	if server == nil {
+		if _, ok := servers[name]; !ok {
+			return nil
+		}
+		delete(servers, name)
+	} else {
+		servers[name] = map[string]any{
+			"type":    "stdio",
+			"command": server.Command,
+			"args":    server.Args,
+			"timeout": int(harness.ToolTimeout.Seconds()),
+		}
+	}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writePrivate(path, append(data, '\n'))
 }
 
 // writePrivate replaces path atomically with mode 0600 content.

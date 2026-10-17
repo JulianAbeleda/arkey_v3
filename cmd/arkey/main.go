@@ -19,6 +19,7 @@ import (
 	"github.com/JulianAbeleda/arkey_v3/internal/control"
 	"github.com/JulianAbeleda/arkey_v3/internal/crush"
 	"github.com/JulianAbeleda/arkey_v3/internal/gateway"
+	"github.com/JulianAbeleda/arkey_v3/internal/harness"
 	"github.com/JulianAbeleda/arkey_v3/internal/kimi"
 	"github.com/JulianAbeleda/arkey_v3/internal/platform"
 	"golang.org/x/sys/unix"
@@ -42,6 +43,11 @@ func run(args []string) int {
 			home, _ = os.UserHomeDir()
 		}
 		return gateway.Main(args[1:], home, os.Stderr)
+	}
+	// The shared harness's MCP server: a client starts it, so like the
+	// gateway it needs no terminal and no configuration of its own.
+	if len(args) > 0 && args[0] == harness.Subcommand {
+		return harness.Main(args[1:], version, os.Stderr)
 	}
 	parsed, err := cli.Parse(args)
 	if err != nil {
@@ -211,6 +217,10 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, "Arkey Kimi configuration:", err)
 			return 1
 		}
+	}
+	if err = services.PrepareHarness(ctx, selectedClient, stateHome, func(line string) { fmt.Println("Arkey:", line) }); err != nil {
+		fmt.Fprintln(os.Stderr, "Arkey harness:", err)
+		return 1
 	}
 	binary, err := filepath.Abs(plan.Binary)
 	if err != nil {
