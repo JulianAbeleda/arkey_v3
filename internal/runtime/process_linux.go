@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -185,7 +186,23 @@ func (s SystemdService) Available(ctx context.Context) bool {
 	return e == nil
 }
 func (s SystemdService) Start(ctx context.Context, unit string, args []string, log string) (int, error) {
+	return s.StartConfigured(ctx, unit, args, log, nil)
+}
+
+// StartConfigured sets env on the unit. A user unit inherits the user
+// manager's environment, not the caller's, so configured variables must be
+// passed explicitly.
+func (s SystemdService) StartConfigured(ctx context.Context, unit string, args []string, log string, env map[string]string) (int, error) {
 	a := []string{"--user", "--quiet", "--collect", "--unit=" + unit, "--property=Restart=on-failure", "--property=StandardOutput=append:" + log, "--property=StandardError=append:" + log}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a = append(a, "--setenv="+k+"="+env[k])
+	}
+	a = append(a, "--")
 	a = append(a, args...)
 	if _, e := s.Runner.Run(ctx, "systemd-run", a...); e != nil {
 		return 0, e

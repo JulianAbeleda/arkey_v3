@@ -17,6 +17,15 @@ func (c Config) validate() error {
 	if c.Vendor != "nvidia" && c.Vendor != "amd" && c.Vendor != "metal" {
 		return fmt.Errorf("runtime: unsupported GPU vendor %q", c.Vendor)
 	}
+	// Arkey recognizes its own server by these (see LlamaProcess) and registers
+	// the context window with MoonBridge, so extra arguments may not move them.
+	reserved := map[string]bool{"--model": true, "-m": true, "--alias": true, "-a": true, "--host": true, "--port": true, "--ctx-size": true, "-c": true}
+	for _, arg := range c.ExtraArgs {
+		key, _, _ := strings.Cut(arg, "=")
+		if reserved[key] {
+			return fmt.Errorf("runtime: llama option %s is managed by Arkey", key)
+		}
+	}
 	return nil
 }
 
@@ -51,7 +60,9 @@ func llamaArgs(c Config) []string {
 	if c.ChatTemplate != "" {
 		args = append(args, "--chat-template-file", c.ChatTemplate)
 	}
-	return args
+	// Last, so a configured option overrides Arkey's default for the same one:
+	// llama-server keeps the last value it parses.
+	return append(args, c.ExtraArgs...)
 }
 
 func recognizeLlama(ctx context.Context, inspector Inspector, pid int, base State) (Process, string, error) {

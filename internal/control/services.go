@@ -728,7 +728,8 @@ func localSlots(paths platform.Paths, model string, contextSize int) string {
 }
 
 func runtimeConfig(cfg config.Config, paths platform.Paths, contextSize int) arkeyruntime.Config {
-	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), SlotsPath: localSlots(paths, cfg.Local.Model, contextSize), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths)}
+	return arkeyruntime.Config{Server: cfg.Local.LlamaServer, Model: cfg.Local.Model, Vendor: cfg.Hardware.Vendor, Port: cfg.Local.Port, ContextSize: contextSize, LogPath: filepath.Join(paths.LogsDir(), "llama.log"), SlotsPath: localSlots(paths, cfg.Local.Model, contextSize), ChatTemplate: chatTemplateFor(cfg.Local.Model, paths),
+		Environment: cfg.Local.LlamaEnvironment, ExtraArgs: cfg.Local.LlamaArgs}
 }
 
 // qwen35 ships a chat template whose assistant branch renders prior tool-call

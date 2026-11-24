@@ -22,6 +22,7 @@ var (
 	ErrUnmanagedPort = errors.New("runtime: configured port is owned by an unmanaged process")
 	ErrHealth        = errors.New("runtime: server did not become healthy")
 	ErrAcceleration  = errors.New("runtime: expected GPU acceleration was not initialized")
+	ErrEnvironment   = errors.New("runtime: launcher cannot apply the configured environment")
 )
 
 type Config struct {
@@ -121,6 +122,13 @@ type Engine struct {
 
 type ConfiguredService interface {
 	StartConfigured(context.Context, string, []string, string, map[string]string) (int, error)
+}
+
+// ConfiguredLauncher starts a direct child with env added to Arkey's own
+// environment. A configured environment is never dropped silently: a launcher
+// or service that cannot apply it refuses the start with ErrEnvironment.
+type ConfiguredLauncher interface {
+	StartDirectConfigured(context.Context, []string, string, map[string]string) (int, error)
 }
 
 type Controller struct {
@@ -405,6 +413,8 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 	if engine.Service != nil && engine.Service.Available(ctx) {
 		if service, ok := engine.Service.(ConfiguredService); ok {
 			pid, e = service.StartConfigured(ctx, engine.Unit, args, cfg.LogPath, cfg.Environment)
+		} else if len(cfg.Environment) > 0 {
+			return State{}, ErrEnvironment
 		} else {
 			pid, e = engine.Service.Start(ctx, engine.Unit, args, cfg.LogPath)
 		}
@@ -413,7 +423,13 @@ func (c *Controller) start(ctx context.Context, cfg Config) (State, error) {
 		if engine.RequireService {
 			return State{}, errors.New("runtime: required bounded service became unavailable")
 		}
-		pid, e = c.Launcher.StartDirect(ctx, args, cfg.LogPath)
+		if launcher, ok := c.Launcher.(ConfiguredLauncher); ok {
+			pid, e = launcher.StartDirectConfigured(ctx, args, cfg.LogPath, cfg.Environment)
+		} else if len(cfg.Environment) > 0 {
+			return State{}, ErrEnvironment
+		} else {
+			pid, e = c.Launcher.StartDirect(ctx, args, cfg.LogPath)
+		}
 	}
 	if e != nil {
 		return State{}, e

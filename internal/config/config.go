@@ -48,6 +48,12 @@ type Local struct {
 	LlamaServer         string `toml:"llama_server"`
 	Port                int    `toml:"port"`
 	ContextSize         int    `toml:"context_size"`
+
+	// LlamaArgs are appended after Arkey's own llama-server arguments, so a
+	// later value overrides Arkey's default for the same option. Options Arkey
+	// manages (model, alias, host, port, context size) are refused at launch.
+	LlamaArgs        []string          `toml:"llama_args"`
+	LlamaEnvironment map[string]string `toml:"llama_environment"`
 }
 
 // Server is the selected llama.cpp server on the network (mode "server"): a
@@ -137,10 +143,11 @@ func (c Config) Validate() error {
 	if c.Local.VLLMMemoryMiB < 1024 || c.Local.VLLMPython == "" {
 		return errors.New("vLLM requires a Python executable and a host memory cap of at least 1024 MiB")
 	}
-	for key, value := range c.Local.VLLMEnvironment {
-		if strings.ContainsAny(key, "=\x00\n") || key == "" || strings.ContainsRune(value, '\x00') {
-			return errors.New("invalid vLLM environment")
-		}
+	if !validEnvironment(c.Local.VLLMEnvironment) {
+		return errors.New("invalid vLLM environment")
+	}
+	if !validEnvironment(c.Local.LlamaEnvironment) {
+		return errors.New("invalid llama environment")
 	}
 	if c.Local.VLLMModel == "" || (c.Local.VLLMContextSize != 0 && c.Local.VLLMContextSize < 4096) {
 		return errors.New("vLLM requires a served model name and context size of zero (auto) or at least 4096")
@@ -169,6 +176,14 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+func validEnvironment(environment map[string]string) bool {
+	for key, value := range environment {
+		if strings.ContainsAny(key, "=\x00\n") || key == "" || strings.ContainsRune(value, '\x00') {
+			return false
+		}
+	}
+	return true
 }
 func Encode(c Config) ([]byte, error) {
 	if e := c.Validate(); e != nil {

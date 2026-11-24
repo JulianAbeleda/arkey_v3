@@ -143,3 +143,33 @@ func TestServerModeNeedsAValidOrigin(t *testing.T) {
 		}
 	}
 }
+
+// llama_args and llama_environment survive a TOML round trip, and a malformed
+// environment key is refused like the vLLM one.
+func TestLlamaArgsAndEnvironmentRoundTripAndValidate(t *testing.T) {
+	home := t.TempDir()
+	c := Default(home)
+	c.Local.LlamaArgs = []string{"-ngl", "99", "--reasoning-budget-message", "line one\n"}
+	c.Local.LlamaEnvironment = map[string]string{"LD_LIBRARY_PATH": "/opt/llama/bin", "GGML_FLAG": "1"}
+	b, err := Encode(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(b, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Local.LlamaArgs, "\x00") != strings.Join(c.Local.LlamaArgs, "\x00") {
+		t.Fatalf("llama_args changed: %#v", got.Local.LlamaArgs)
+	}
+	if len(got.Local.LlamaEnvironment) != 2 || got.Local.LlamaEnvironment["LD_LIBRARY_PATH"] != "/opt/llama/bin" || got.Local.LlamaEnvironment["GGML_FLAG"] != "1" {
+		t.Fatalf("llama_environment changed: %#v", got.Local.LlamaEnvironment)
+	}
+	for _, key := range []string{"", "A=B", "A\nB"} {
+		bad := Default(home)
+		bad.Local.LlamaEnvironment = map[string]string{key: "1"}
+		if bad.Validate() == nil {
+			t.Errorf("accepted llama environment key %q", key)
+		}
+	}
+}

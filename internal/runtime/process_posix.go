@@ -43,7 +43,10 @@ func ProcessAlive(pid int) bool {
 
 type DirectLauncher struct{}
 
-func (DirectLauncher) StartDirect(ctx context.Context, args []string, logPath string) (int, error) {
+func (l DirectLauncher) StartDirect(ctx context.Context, args []string, logPath string) (int, error) {
+	return l.StartDirectConfigured(ctx, args, logPath, nil)
+}
+func (DirectLauncher) StartDirectConfigured(ctx context.Context, args []string, logPath string, env map[string]string) (int, error) {
 	if len(args) == 0 {
 		return 0, errors.New("runtime: empty command")
 	}
@@ -58,6 +61,12 @@ func (DirectLauncher) StartDirect(ctx context.Context, args []string, logPath st
 		return 0, e
 	}
 	cmd := exec.Command(args[0], args[1:]...)
+	if len(env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
 	cmd.Stdout = f
 	cmd.Stderr = f
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

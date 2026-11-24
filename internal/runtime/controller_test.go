@@ -428,3 +428,62 @@ func TestRepeatedSharedEnsureReusesProcess(t *testing.T) {
 		}
 	}
 }
+
+// Configured llama arguments come after Arkey's, so llama-server's last-value
+// rule lets them override a default; options Arkey manages are refused.
+func TestLlamaExtraArgsAppendLastAndManagedOptionsAreRefused(t *testing.T) {
+	c := cfg()
+	c.ExtraArgs = []string{"--cache-type-k", "f16", "-bs"}
+	a := llamaArgs(c)
+	if strings.Join(a[len(a)-3:], " ") != "--cache-type-k f16 -bs" {
+		t.Fatalf("extra args not appended last: %#v", a)
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("unmanaged option refused: %v", err)
+	}
+	for _, managed := range []string{"--port=9", "-c", "--ctx-size", "--model", "-m", "--alias", "-a", "--host"} {
+		c.ExtraArgs = []string{managed, "1"}
+		if c.validate() == nil {
+			t.Errorf("managed option %s accepted", managed)
+		}
+	}
+}
+
+type configuredSystemd struct {
+	fakeSystemd
+	args []string
+	env  map[string]string
+}
+
+func (s *configuredSystemd) StartConfigured(_ context.Context, _ string, args []string, _ string, env map[string]string) (int, error) {
+	s.args, s.env = args, env
+	return s.pid, nil
+}
+
+// The llama environment reaches the service, and a launcher that cannot apply
+// it refuses the start instead of running the server without it.
+func TestLlamaEnvironmentReachesServiceAndIsNeverDropped(t *testing.T) {
+	c, _, _, la := setup()
+	service := &configuredSystemd{fakeSystemd: fakeSystemd{pid: 7}}
+	c.Service = service
+	launch := cfg()
+	launch.Environment = map[string]string{"LD_LIBRARY_PATH": "/opt/llama/bin"}
+	launch.ExtraArgs = []string{"-fa", "on"}
+	if _, rb, err := c.Start(context.Background(), launch); err != nil || rb != nil {
+		t.Fatalf("start: %v rollback %v", err, rb)
+	}
+	if service.env["LD_LIBRARY_PATH"] != "/opt/llama/bin" || strings.Join(service.args[len(service.args)-2:], " ") != "-fa on" {
+		t.Fatalf("service got env %#v args %#v", service.env, service.args)
+	}
+	if len(la.started) != 0 {
+		t.Fatal("direct launcher used while a service was available")
+	}
+
+	c, _, _, la = setup()
+	if _, _, err := c.Start(context.Background(), launch); !errors.Is(err, ErrEnvironment) {
+		t.Fatalf("launcher without environment support: got %v", err)
+	}
+	if len(la.started) != 0 {
+		t.Fatal("server started without its configured environment")
+	}
+}

@@ -396,6 +396,18 @@ func TestLocalRuntimeDescriptorUsesCentralConfigWithoutChangingSelectedRoute(t *
 	}
 }
 
+// The [local] llama arguments and environment reach the llama launch config.
+func TestLlamaRuntimeConfigCarriesConfiguredArgsAndEnvironment(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default(home)
+	cfg.Local.LlamaArgs = []string{"-fa", "on"}
+	cfg.Local.LlamaEnvironment = map[string]string{"LD_LIBRARY_PATH": "/opt/llama/bin"}
+	got := runtimeConfig(cfg, platform.DefaultPaths(home), 16384)
+	if strings.Join(got.ExtraArgs, " ") != "-fa on" || got.Environment["LD_LIBRARY_PATH"] != "/opt/llama/bin" || got.Engine != "" {
+		t.Fatalf("llama launch config lost configured args/env: %+v", got)
+	}
+}
+
 func TestSharedSlotStorageIsScopedToModelAndContext(t *testing.T) {
 	paths := platform.DefaultPaths(t.TempDir())
 	a := localSlots(paths, "/models/a.gguf", 32768)
